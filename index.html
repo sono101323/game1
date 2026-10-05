@@ -22,6 +22,7 @@
   --foe: #4cb3e9;         /* 相手のコマ */
   --foe2: #7fcf8a;        /* 3人目 */
   --foe3: #c49af2;        /* 4人目 */
+  --ok: #6cc08b;          /* 準備OK */
   --font-display: "Dela Gothic One", "Hiragino Sans", "Yu Gothic", sans-serif;
   --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
   color-scheme: dark;
@@ -98,7 +99,17 @@ button { cursor: pointer; }
 .cpulist .glyph, .members .glyph { width: 44px; height: 44px; display: grid; place-items: center; font-size: 30px; border: 1px solid var(--line); border-radius: 4px; background: var(--ink); }
 .members { display: flex; flex-direction: column; gap: 6px; }
 .member { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-.member .who { flex: 1; min-width: 0; }
+.member .who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.member .who .nm { font-weight: 700; overflow-wrap: anywhere; }
+.member .who .sub { font-size: 11px; color: var(--muted); }
+.member { padding: 6px; border: 1px solid transparent; border-radius: 4px; }
+.member.is-ready { border-color: color-mix(in srgb, var(--ok) 55%, transparent); background: color-mix(in srgb, var(--ok) 8%, transparent); }
+.pill { flex: none; font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.pill.ok { background: var(--ok); border-color: var(--ok); color: var(--ink); font-weight: 700; }
+.readystatus { margin: 0; font-size: 13px; color: var(--paper); }
+#readyBtn.ready { background: var(--ok); color: var(--ink); }
+#onIn .row > #readyBtn { flex: 2.2; }
+#onIn .row > #leaveRoom { flex: 1; }
 .member.empty { color: var(--muted); font-size: 12px; }
 .member.empty .glyph { border-style: dashed; color: var(--muted); font-size: 18px; }
 .skillpick, .shape { display: flex; flex-direction: column; gap: 6px; }
@@ -329,8 +340,9 @@ button { cursor: pointer; }
         <button class="ghost" id="copyCode" type="button">コピー</button>
       </div>
       <div class="members" id="members" aria-label="参加者"></div>
+      <p class="readystatus" id="readyStatus" role="status"></p>
       <div class="row">
-        <button class="go" id="readyBtn" type="button" disabled>準備OK</button>
+        <button class="go" id="readyBtn" type="button" disabled aria-pressed="false">準備OK にする</button>
         <button class="ghost" id="leaveRoom" type="button">退出</button>
       </div>
       <div class="streak" id="onRecord">この部屋の成績 0勝 0敗</div>
@@ -854,6 +866,8 @@ window.__simulate = (list, ps) => {
   while (!B.over) { stepBattle(B); hits += _hits.length; _hits.length = 0; if (++k % 15 === 0) for (let i = 0; i < B.tops.length; i++) cpuSkillAI(B, i); }
   return { winIdx: B.winIdx, code: B.code, order: B.order, t: +B.t.toFixed(1), hits };
 };
+// 動作確認・強さの分析用に、物理計算の関数を外から呼べるようにしておく
+window.__mg = { analyzeGlyph: (...a) => analyzeGlyph(...a), newBattle: (...a) => newBattle(...a), stepBattle: (...a) => stepBattle(...a), cpuSkillAI: (...a) => cpuSkillAI(...a), startPos: (...a) => startPos(...a), ensureFont: (...a) => ensureFont(...a), fontById: (...a) => fontById(...a), drain: () => { _hits.length = 0; } };
 window.__analyze = (ch, f) => { const g = analyzeGlyph(ch, f); return { area: +g.area.toFixed(3), maxR: +g.maxR.toFixed(3), round: +g.round.toFixed(3), ecc: +g.ecc.toFixed(3), I: +g.inertia.toFixed(3), decay45: +spinDecayRate(g, 45).toFixed(3), ...ratings(g) }; };
 
 // ───────── 3D表示 ─────────
@@ -1094,7 +1108,7 @@ function renderSkills() {
     b.setAttribute('aria-pressed', String(id === S.skill));
     b.addEventListener('click', () => {
       S.skill = id; store.set('mg.skill', id); renderSkills();
-      if (ON.R) { ON.R.presence({ skill: id }).catch(() => {}); updateRoomUI(); }
+      if (ON.R) { sendDeck(); updateRoomUI(); }
     });
     box.appendChild(b);
   }
@@ -1109,7 +1123,7 @@ function renderPassives() {
     b.setAttribute('aria-pressed', String(id === S.passive));
     b.addEventListener('click', () => {
       S.passive = id; store.set('mg.passive', id); renderPassives();
-      if (ON.R) { ON.R.presence({ passive: id }).catch(() => {}); updateRoomUI(); }
+      if (ON.R) { sendDeck(); updateRoomUI(); }
     });
     box.appendChild(b);
   }
@@ -1183,7 +1197,7 @@ async function refreshGlyph() {
   S.ch = ch; S.g = g; store.set('mg.ch', ch);
   drawPreview(g); showStats(g); showStreak();
   setIdle(g);
-  if (ON.R) ON.R.presence({ ch: S.ch, font: S.font, xf: S.xf }).catch(() => {});
+  if (ON.R) sendDeck();
   updateButtons();
 }
 function fitCharInput() {
@@ -1540,7 +1554,7 @@ function chatSync(others) {
   const now = new Set();
   for (const p of others) {
     const pr = p.presence || {};
-    const ch = cleanName(pr.name) || cleanCh(pr.ch) || '？';
+    const ch = cleanName(pr.name) || '名無し';
     now.add(p.peer);
     if (!CHAT.known.has(p.peer)) addChatLine('sys', `${ch} さんが入室しました`);
     CHAT.known.set(p.peer, ch);
@@ -1766,7 +1780,7 @@ async function joinRoom(code, role) {
   onMsg('');
   ON.unsubPeers = ON.R.onPeers(() => sync(), () => { onMsg('ルームとの接続が切れました。退出して入り直してください。'); });
   resetChat();
-  ON.R.presence({ v: 2, chat: [], role, name: ON.name, ch: S.ch, font: S.font, xf: S.xf, skill: S.skill, passive: S.passive, ready: false,
+  ON.R.presence({ v: 3, chat: [], role, name: ON.name, deck: null, ready: false,
     phase: role === 'host' ? 'lobby' : null, m: 0, seats: [], players: [], shot: null, sk: null, st: null, s: null, res: null }).catch(() => {});
   updateRoomUI();
   // 番号違いに気づけるよう、しばらくホストが見つからなければ知らせる
@@ -1841,9 +1855,10 @@ function sync() {
     if (id === ON.me) return { peer: id, me: true, host: ON.role === 'host', name: ON.name, ch: S.ch, font: S.font, xf: S.xf, skill: S.skill, passive: S.passive, ready: ON.ready, g: S.g };
     const p = byPeer.get(id);
     if (!p) return null;
-    const pr = p.presence, ch = cleanCh(pr.ch), font = cleanFont(pr.font), xf = cleanXf(pr.xf);
-    return { peer: id, me: false, host: pr.role === 'host', name: cleanName(pr.name) || '名無し', ch, font, xf, skill: cleanSkill(pr.skill),
-      passive: PASSIVES[pr.passive] ? pr.passive : 'none', ready: pr.ready === true,
+    const pr = p.presence, dk = pr.deck && typeof pr.deck === 'object' ? pr.deck : {};
+    const ch = cleanCh(dk.ch), font = cleanFont(dk.font), xf = cleanXf(dk.xf);
+    return { peer: id, me: false, host: pr.role === 'host', name: cleanName(pr.name) || '名無し', ch, font, xf, skill: cleanSkill(dk.skill),
+      passive: PASSIVES[dk.passive] ? dk.passive : 'none', ready: pr.ready === true, hasDeck: !!(ch && font),
       g: ch && font ? glyphFor(ch, font, xf) : null, pres: pr };
   }).filter(Boolean);
   chatSync(others);
@@ -2041,18 +2056,27 @@ function updateRoomUI() {
   const box = $('members'); box.innerHTML = '';
   let k = 0;
   for (const m of ON.members) {
-    const row = document.createElement('div'); row.className = 'member';
+    const row = document.createElement('div'); row.className = 'member' + (m.ready ? ' is-ready' : '');
     const g = document.createElement('div'); g.className = 'glyph';
-    if (m.ch && m.font) setGlyphEl(g, m.ch, m.font); else g.textContent = '？';
+    // ほかの人の文字は試合が始まるまで見せない
+    if (m.me && m.ch && m.font) setGlyphEl(g, m.ch, m.font); else { g.textContent = '？'; g.style.fontFamily = ''; }
     g.style.color = m.me ? 'var(--you)' : FOE_CSS[k++ % 3];
     const who = document.createElement('div'); who.className = 'who';
-    const parts = [m.name + (m.me ? '（あなた）' : '')];
-    if (m.host) parts[0] += '・ホスト';
-    if (m.font) parts.push(fontById(m.font).name);
-    if (m.xf && xfKey(m.xf) !== xfKey(XF0)) parts.push(shapeText(m.xf));
-    parts.push(SKILLS[m.skill].name, PASSIVES[m.passive || 'none'].name, m.ready ? '準備OK' : '準備中');
-    who.textContent = parts.join('・') + (!m.me && m.g === null ? '（この文字は使えません）' : '');
-    row.append(g, who); box.append(row);
+    const nm = document.createElement('div'); nm.className = 'nm';
+    nm.textContent = m.name + (m.me ? '（あなた）' : '') + (m.host ? '・ホスト' : '');
+    const sub = document.createElement('div'); sub.className = 'sub';
+    if (m.me) {
+      const parts = [fontById(m.font).name];
+      if (m.xf && xfKey(m.xf) !== xfKey(XF0)) parts.push(shapeText(m.xf));
+      parts.push(SKILLS[m.skill].name, PASSIVES[m.passive || 'none'].name);
+      sub.textContent = parts.join('・') + '（ほかの人には見えません）';
+    } else {
+      sub.textContent = m.ready && m.hasDeck && m.g === null ? 'この人の文字はコマにできません' : '設定は試合が始まるまで非公開';
+    }
+    who.append(nm, sub);
+    const pill = document.createElement('span'); pill.className = 'pill' + (m.ready ? ' ok' : '');
+    pill.textContent = m.ready ? '✓ 準備OK' : '準備中';
+    row.append(g, who, pill); box.append(row);
   }
   const free = MAX_PLAYERS - ON.members.length;
   if (ON.members.length && free > 0) {
@@ -2067,15 +2091,34 @@ function updateRoomUI() {
     box.append(row);
   }
   const seated = ON.role === 'host' || (ON.me && ON.seats.includes(ON.me));
-  $('readyBtn').disabled = !S.g || !seated || ON.members.filter(m => !m.me).length === 0;
-  $('readyBtn').textContent = ON.ready ? '準備OK を取り消す' : '準備OK';
+  const others = ON.members.filter(m => !m.me);
+  $('readyBtn').disabled = !S.g || !seated || others.length === 0;
+  $('readyBtn').classList.toggle('ready', ON.ready);
+  $('readyBtn').setAttribute('aria-pressed', String(ON.ready));
+  $('readyBtn').textContent = ON.ready ? '✓ 準備OK（取消）' : '準備OK にする';
+  $('readyBtn').title = ON.ready ? 'もう一度押すと準備OKを取り消します' : '';
+  // いま何を待っているかを1行で示す
+  const readyN = ON.members.filter(m => m.ready).length, total = ON.members.length;
+  const waiting = ON.members.filter(m => !m.ready).map(m => m.me ? 'あなた' : m.name);
+  let line;
+  if (!seated) line = '';
+  else if (!others.length) line = 'ほかの人の参加を待っています。ルーム番号を伝えてください。';
+  else if (!waiting.length) line = '全員そろいました。まもなく始まります。';
+  else line = `準備OK ${readyN}/${total}人。${waiting.join('・')}の準備を待っています。全員そろうと自動で始まります。`;
+  $('readyStatus').textContent = line;
   $('onRecord').textContent = `この部屋の成績 ${ON.rec.w}勝 ${ON.rec.l}敗`;
 }
 
+// 自分の設定（文字・書体・形・スキル・パッシブ）は、準備OKのときだけほかの人へ送る。
+// 準備前はデータごと送らないので、ほかの人の画面には届かない
+const myDeck = () => ({ ch: S.ch, font: S.font, xf: S.xf, skill: S.skill, passive: S.passive });
+function sendDeck() {
+  if (ON.R && ON.ready) ON.R.presence({ deck: myDeck() }).catch(() => {});
+}
 function setReady(v) {
   if (!ON.R) return;
   ON.ready = v;
-  ON.R.presence({ ready: v }).catch(() => {});
+  ON.R.presence({ ready: v, deck: v ? myDeck() : null }).catch(() => {});
   sync();
 }
 
