@@ -91,6 +91,21 @@ button { cursor: pointer; }
 #codeIn:focus { border-color: var(--brass); outline: none; }
 .codeline { display: flex; align-items: center; gap: 10px; }
 #codeOut { font-family: var(--font-display); font-size: 26px; letter-spacing: .2em; color: var(--brass); flex: 1; user-select: all; }
+.chat { display: flex; flex-direction: column; gap: 6px; }
+.chatlog { max-height: 132px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; font-size: 13px; line-height: 1.45;
+  background: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; overflow-wrap: anywhere; }
+.chatlog:empty::before { content: "メッセージを送ると、ここに表示されます"; color: var(--muted); font-size: 12px; }
+.chatlog .line b { font-weight: 700; margin-right: .5em; }
+.chatlog .me b { color: var(--you); }
+.chatlog .opp b { color: var(--foe); }
+.chatlog .sys { color: var(--muted); font-size: 12px; }
+.chatform { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+#chatIn { background: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; min-width: 0; font-size: 14px; }
+#chatIn:focus { border-color: var(--brass); outline: none; }
+/* 対戦中はスタジアムの左上に小さく重ねる */
+.chat.float { position: absolute; left: 16px; top: 56px; width: min(300px, calc(100% - 32px)); padding: 8px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--line); border-radius: 4px; }
+.chat.float .chatlog { max-height: 78px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .go {
   border: 0; border-radius: 4px; padding: 12px; background: var(--brass); color: var(--ink);
@@ -241,6 +256,14 @@ button { cursor: pointer; }
         <button class="ghost" id="leaveRoom" type="button">退出</button>
       </div>
       <div class="streak" id="onRecord">この部屋の成績 0勝 0敗</div>
+      <div class="chat" id="chat">
+        <div class="chatlog" id="chatLog" aria-live="polite" aria-label="チャット"></div>
+        <form class="chatform" id="chatForm" autocomplete="off">
+          <label class="sr" for="chatIn">メッセージ</label>
+          <input id="chatIn" type="text" maxlength="50" autocomplete="off" placeholder="メッセージ（50文字まで）" enterkeyhint="send">
+          <button class="ghost" id="chatSend" type="submit">送信</button>
+        </form>
+      </div>
     </div>
     <p class="note" id="onMsg" role="status">接続しています…</p>
   </div>
@@ -810,6 +833,7 @@ function toLaunch(foeCh, foeFont) {
   setGlyphEl($('hudYou'), S.ch, S.font); setGlyphEl($('hudFoe'), foeCh, foeFont);
   $('timer').textContent = MATCH_TIME;
   $('spinYou').style.width = '0%'; $('spinFoe').style.width = '0%';
+  placeChat();
   S.gauge = 0; S.gaugeDir = 1; S.launchAt = performance.now();
   $('shoot').focus();
 }
@@ -886,7 +910,75 @@ function backToSetup() {
   $('result').hidden = true; $('hud').hidden = true; $('launch').hidden = true; $('setup').hidden = false;
   showStreak();
   if (S.g) setIdle(S.g);
+  placeChat();
   updateRoomUI();
+}
+
+// ───────── チャット ─────────
+// 相手とのチャットも presence で運ぶ（各自が直近6件を自分の状態として載せ、相手は未表示の分だけ出す）。
+// claude.ai の閲覧のみの共有相手でも送れて、PeerJS 版でも同じ仕組みで動く。
+const CHAT = { mine: [], seq: 0, seen: new Map(), lastSend: 0, oppPeer: null };
+const CHAT_STRIP = /[\p{Cc}\p{Co}\p{Cs}\u00AD\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/gu;
+function cleanText(v) {
+  if (typeof v !== 'string') return '';
+  return Array.from(v.replace(CHAT_STRIP, '').replace(/\s+/g, ' ').trim()).slice(0, 50).join('');
+}
+function addChatLine(who, text) {
+  const log = $('chatLog');
+  const row = document.createElement('div');
+  row.className = 'line ' + who;
+  if (who !== 'sys') { const b = document.createElement('b'); b.textContent = who === 'me' ? '自分' : '相手'; row.append(b); }
+  const sp = document.createElement('span'); sp.textContent = text; row.append(sp);
+  log.append(row);
+  while (log.children.length > 60) log.firstChild.remove();
+  log.scrollTop = log.scrollHeight;
+}
+function resetChat() {
+  CHAT.mine = []; CHAT.seq = 0; CHAT.seen.clear(); CHAT.oppPeer = null;
+  $('chatLog').textContent = ''; $('chatIn').value = '';
+}
+function sendChat(e) {
+  e.preventDefault();
+  if (!ON.R) return;
+  const t = cleanText($('chatIn').value);
+  if (!t) return;
+  const now = performance.now();
+  if (now - CHAT.lastSend < 700) return;   // 連投しすぎないように
+  CHAT.lastSend = now;
+  CHAT.mine.push([++CHAT.seq, t]);
+  if (CHAT.mine.length > 6) CHAT.mine.shift();
+  ON.R.presence({ chat: CHAT.mine.slice() }).catch(() => {});
+  addChatLine('me', t);
+  $('chatIn').value = '';
+}
+function chatSync(opp) {
+  const peer = opp ? opp.peer : null;
+  if (peer !== CHAT.oppPeer) {
+    if (CHAT.oppPeer && !peer) addChatLine('sys', '相手が退出しました');
+    if (peer) addChatLine('sys', '相手が入室しました');
+    CHAT.oppPeer = peer;
+  }
+  if (!opp) return;
+  const arr = opp.presence && opp.presence.chat;
+  if (!Array.isArray(arr)) return;
+  let seen = CHAT.seen.get(peer) || 0;
+  for (const m of arr.slice(-6)) {
+    if (!Array.isArray(m)) continue;
+    const i = num(m[0], 0, 1e9, 0);
+    if (i <= seen) continue;
+    seen = i;
+    const t = cleanText(m[1]);
+    if (t) addChatLine('opp', t);
+  }
+  CHAT.seen.set(peer, seen);
+}
+// 対戦中はスタジアムの上へ、待機中はルームの欄へチャットを移す
+function placeChat() {
+  const chat = $('chat');
+  const floating = !!ON.R && S.mode !== 'idle';
+  chat.classList.toggle('float', floating);
+  if (floating) $('arena').insertBefore(chat, $('result'));
+  else $('onIn').append(chat);
 }
 
 // ───────── オンライン対戦 ─────────
@@ -1017,7 +1109,8 @@ async function joinRoom(code, role) {
     joinedAt: performance.now() });
   onMsg('');
   ON.unsubPeers = ON.R.onPeers(() => sync(), () => { onMsg('ルームとの接続が切れました。退出して入り直してください。'); });
-  ON.R.presence({ v: 1, role, ch: S.ch, font: S.font, ready: false, phase: role === 'host' ? 'lobby' : null, m: 0, opp: null, shot: null, s: null, res: null }).catch(() => {});
+  resetChat();
+  ON.R.presence({ v: 1, chat: [], role, ch: S.ch, font: S.font, ready: false, phase: role === 'host' ? 'lobby' : null, m: 0, opp: null, shot: null, s: null, res: null }).catch(() => {});
   updateRoomUI();
   // 番号違いに気づけるよう、しばらくホストが見つからなければ知らせる
   if (role === 'guest') setTimeout(() => { if (ON.R && !ON.opp) onMsg('このルーム番号の部屋が見つかりません。番号を確かめるか、相手がルームを開くのを待ってください。'); }, 4000);
@@ -1028,6 +1121,7 @@ async function leaveRoom() {
   if (!R) return;
   if (ON.unsubPeers) ON.unsubPeers();
   ON.R = null; ON.role = null; ON.opp = null;
+  placeChat();
   try { await R.leave(); } catch (e) { /* すでに切れている */ }
   if (S.mode !== 'idle') backToSetup();
   onMsg('');
@@ -1066,6 +1160,7 @@ function sync() {
     else if (host) onMsg('');
   }
   ON.opp = opp;
+  chatSync(opp);
   const pr = opp ? opp.presence : null;
   const ch = pr ? cleanCh(pr.ch) : null, font = pr ? cleanFont(pr.font) : null;
   if (ch && font && ch + font !== ON.oppKey) loadOppGlyph(ch, font);
@@ -1249,6 +1344,7 @@ $('joinRoom').addEventListener('click', () => {
 });
 $('codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') $('joinRoom').click(); });
 $('leaveRoom').addEventListener('click', leaveRoom);
+$('chatForm').addEventListener('submit', sendChat);
 $('readyBtn').addEventListener('click', () => setReady(!ON.ready));
 $('copyCode').addEventListener('click', () => {
   const done = () => { $('copyCode').textContent = 'コピー済み'; setTimeout(() => { $('copyCode').textContent = 'コピー'; }, 1500); };
@@ -1261,7 +1357,8 @@ function selectCode() {
   const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
 }
 window.addEventListener('keydown', e => {
-  if (e.code === 'Space' && S.mode === 'launch' && document.activeElement !== $('shoot')) { e.preventDefault(); shoot(); }
+  const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
+  if (e.code === 'Space' && !typing && S.mode === 'launch' && document.activeElement !== $('shoot')) { e.preventDefault(); shoot(); }
 });
 
 // ───────── ループ ─────────
