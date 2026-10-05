@@ -1614,6 +1614,8 @@ const ON = {
   skLast: new Map(), skPend: new Map(), stLast: new Map(), skN: 0, stN: 0, full: false,
 };
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+// 通信の取り決めの版。ページを更新して中身が変わったら上げる（版が違う人どうしは試合を始められない）
+const PROTO = 3;
 
 // ほかの人から届く値はすべて信用せず、型と範囲を確かめてから使う
 const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
@@ -1780,7 +1782,7 @@ async function joinRoom(code, role) {
   onMsg('');
   ON.unsubPeers = ON.R.onPeers(() => sync(), () => { onMsg('ルームとの接続が切れました。退出して入り直してください。'); });
   resetChat();
-  ON.R.presence({ v: 3, chat: [], role, name: ON.name, deck: null, ready: false,
+  ON.R.presence({ v: PROTO, chat: [], role, name: ON.name, deck: null, ready: false,
     phase: role === 'host' ? 'lobby' : null, m: 0, seats: [], players: [], shot: null, sk: null, st: null, s: null, res: null }).catch(() => {});
   updateRoomUI();
   // 番号違いに気づけるよう、しばらくホストが見つからなければ知らせる
@@ -1862,6 +1864,9 @@ function sync() {
       g: ch && font ? glyphFor(ch, font, xf) : null, pres: pr };
   }).filter(Boolean);
   chatSync(others);
+  // 古い（または新しい）版のページを開いている人がいると試合が始まらないので、はっきり知らせる
+  ON.stale = ON.members.some(m => !m.me && m.pres && m.pres.v !== PROTO);
+  if (ON.stale) onMsg('ページの版が違う参加者がいるため、試合を始められません。全員ページを再読み込み（更新）してください。');
   if (ON.role === 'host') hostTick(byPeer); else guestTick(hostP ? hostP.presence : null);
   updateRoomUI();
 }
@@ -2071,7 +2076,8 @@ function updateRoomUI() {
       parts.push(SKILLS[m.skill].name, PASSIVES[m.passive || 'none'].name);
       sub.textContent = parts.join('・') + '（ほかの人には見えません）';
     } else {
-      sub.textContent = m.ready && m.hasDeck && m.g === null ? 'この人の文字はコマにできません' : '設定は試合が始まるまで非公開';
+      sub.textContent = m.pres && m.pres.v !== PROTO ? '版の違うページです（再読み込みが必要）'
+        : m.ready && m.hasDeck && m.g === null ? 'この人の文字はコマにできません' : '設定は試合が始まるまで非公開';
     }
     who.append(nm, sub);
     const pill = document.createElement('span'); pill.className = 'pill' + (m.ready ? ' ok' : '');
