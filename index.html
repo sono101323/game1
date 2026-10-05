@@ -20,6 +20,8 @@
   --brass: #d9a441;       /* アクセント：真鍮 */
   --you: #e9724c;         /* 自分のコマ */
   --foe: #4cb3e9;         /* 相手のコマ */
+  --foe2: #7fcf8a;        /* 3人目 */
+  --foe3: #c49af2;        /* 4人目 */
   --font-display: "Dela Gothic One", "Hiragino Sans", "Yu Gothic", sans-serif;
   --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
   color-scheme: dark;
@@ -81,6 +83,24 @@ button { cursor: pointer; }
 .foe { display: flex; align-items: center; gap: 10px; }
 .foe .glyph { width: 44px; height: 44px; display: grid; place-items: center; font-size: 30px; border: 1px solid var(--line); border-radius: 4px; color: var(--foe); background: var(--ink); }
 .foe .who { flex: 1; min-width: 0; font-size: 13px; }
+.cpuhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.cpulist { flex: 1; display: flex; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.cpulist .glyph, .members .glyph { width: 44px; height: 44px; display: grid; place-items: center; font-size: 30px; border: 1px solid var(--line); border-radius: 4px; background: var(--ink); }
+.members { display: flex; flex-direction: column; gap: 6px; }
+.member { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.member .who { flex: 1; min-width: 0; }
+.member.empty { color: var(--muted); font-size: 12px; }
+.member.empty .glyph { border-style: dashed; color: var(--muted); font-size: 18px; }
+.skillpick { display: flex; flex-direction: column; gap: 6px; }
+.foes { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.foes .g { font-size: 22px; }
+.foes .side.out, .hud .side.out { opacity: .35; }
+.skillbar { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); width: min(420px, calc(100% - 32px)); display: grid; }
+#skillBtn:disabled { opacity: .45; }
+.toast { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(90px + env(safe-area-inset-bottom, 0px)); padding: 6px 14px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--line); border-radius: 4px;
+  font-family: var(--font-display); font-size: 18px; white-space: nowrap; pointer-events: none; animation: toast 1.4s ease forwards; }
+@keyframes toast { 0% { opacity: 0; transform: translate(-50%, 8px); } 12% { opacity: 1; transform: translate(-50%, 0); } 75% { opacity: 1; } 100% { opacity: 0; } }
 .ghost { background: transparent; border: 1px solid var(--line); border-radius: 3px; padding: 4px 10px; font-size: 13px; }
 
 .tabs { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
@@ -119,7 +139,7 @@ button { cursor: pointer; }
 
 .hud {
   position: absolute; left: 16px; right: 16px; top: calc(14px + env(safe-area-inset-top, 0px));
-  display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: center; pointer-events: none;
+  display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: start; pointer-events: none;
 }
 .side { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .side.r { flex-direction: row-reverse; }
@@ -164,7 +184,7 @@ button { cursor: pointer; }
   #charInput.multi { font-size: 18px; }
   .brand h1 { font-size: 20px; }
 }
-@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } .toast { animation: none; } }
 </style>
 </head>
 <body>
@@ -173,9 +193,13 @@ button { cursor: pointer; }
 <canvas id="stage" aria-label="対戦スタジアム"></canvas>
 
 <div class="hud" id="hud" hidden>
-  <div class="side"><span class="g" id="hudYou" style="color:var(--you)">龍</span><div class="spin"><i id="spinYou" style="background:var(--you)"></i></div></div>
+  <div class="side" id="hudMe"><span class="g" id="hudYou" style="color:var(--you)">龍</span><div class="spin"><i id="spinYou" style="background:var(--you)"></i></div></div>
   <div id="timer">60</div>
-  <div class="side r"><span class="g" id="hudFoe" style="color:var(--foe)">〇</span><div class="spin"><i id="spinFoe" style="background:var(--foe)"></i></div></div>
+  <div class="foes" id="hudFoes"></div>
+</div>
+<div class="toast" id="toast" hidden></div>
+<div class="skillbar" id="skillBar" hidden>
+  <button class="go" id="skillBtn" type="button">スキル</button>
 </div>
 
 <div class="launch" id="launch" hidden>
@@ -218,15 +242,23 @@ button { cursor: pointer; }
     </div>
   </div>
   <div class="fonts" role="group" aria-label="書体" id="fonts"></div>
+  <div class="skillpick">
+    <span class="label">スキル（1つ選んで、対戦中にボタンで使う）</span>
+    <div class="fonts" id="skills" role="group" aria-label="スキル"></div>
+    <p class="note" id="skillDesc"></p>
+  </div>
   <div class="tabs" role="tablist" aria-label="対戦の種類">
     <button class="tab" id="tabCpu" role="tab" type="button" aria-selected="true">CPUと対戦</button>
     <button class="tab" id="tabOnline" role="tab" type="button" aria-selected="false">オンライン</button>
   </div>
 
   <div class="pane" id="paneCpu">
+    <div class="cpuhead">
+      <span class="label">CPUの数</span>
+      <div class="fonts" id="cpuCount" role="group" aria-label="CPUの数"></div>
+    </div>
     <div class="foe">
-      <div class="glyph" id="foeGlyph">〇</div>
-      <div class="who" id="foeWho">CPU・丸ゴシック</div>
+      <div class="cpulist" id="cpuList"></div>
       <button class="ghost" id="reroll" type="button">替える</button>
     </div>
     <button class="go" id="start" type="button">対戦する</button>
@@ -249,10 +281,7 @@ button { cursor: pointer; }
         <code id="codeOut">----</code>
         <button class="ghost" id="copyCode" type="button">コピー</button>
       </div>
-      <div class="foe">
-        <div class="glyph" id="oppGlyph">？</div>
-        <div class="who" id="oppWho">相手を待っています</div>
-      </div>
+      <div class="members" id="members" aria-label="参加者"></div>
       <div class="row">
         <button class="go" id="readyBtn" type="button" disabled>準備OK</button>
         <button class="ghost" id="leaveRoom" type="button">退出</button>
@@ -386,7 +415,7 @@ function spinDecayRate(g, w) {
 }
 
 // angle：打ち出す向き（ラジアン。x軸から z軸へ回る向きが正）。省略時は中心を左回りに回り込む向き
-function makeTop(g, x, z, power, side, angle) {
+function makeTop(g, x, z, power, side, angle, skill) {
   const w0 = 34 + 30 * power;
   const sp = 2.5 + 3 * power;
   let vx, vz;
@@ -396,8 +425,10 @@ function makeTop(g, x, z, power, side, angle) {
     const r = Math.hypot(x, z) || 1;
     vx = -z / r * sp - x / r * .8; vz = x / r * sp - z / r * .8;
   }
+  const sk = SKILLS[skill] ? skill : 'dash';
   return { g, side, x, z, vx, vz, th: 0, w: w0, w0,
-           state: 'spin', y: 0, tilt: 0, prec: 0, fall: 0 };
+           state: 'spin', y: 0, tilt: 0, prec: 0, fall: 0,
+           skill: sk, cdUntil: 1, uses: SKILLS[sk].uses || Infinity, guard: 0, dash: 0 };
 }
 
 function stepTop(t, dt) {
@@ -413,6 +444,8 @@ function stepTop(t, dt) {
     t.fall = Math.min(1, t.fall + dt * 2.5);
     return;
   }
+  if (t.guard > 0) t.guard -= dt;
+  if (t.dash > 0) t.dash -= dt;
   const r = Math.hypot(t.x, t.z) || 1e-6;
   const sr = clamp01(t.w / t.w0);
   // すり鉢の傾斜で中心へ
@@ -480,7 +513,9 @@ function collide(a, b) {
   if (!cnt) return;
   const cx = sx / cnt, cz = sz / cnt;
   let nx = d > 1e-5 ? dx / d : 1, nz = d > 1e-5 ? dz / d : 0;
-  const ma = a.g.mass, mb = b.g.mass, Ia = a.g.inertia, Ib = b.g.inertia;
+  // 「踏ん張り」中は重さと回転の粘りが2.5倍になる
+  const ka = a.guard > 0 ? 2.5 : 1, kb = b.guard > 0 ? 2.5 : 1;
+  const ma = a.g.mass * ka, mb = b.g.mass * kb, Ia = a.g.inertia * ka, Ib = b.g.inertia * kb;
   // めり込みを少しずつ解消
   const corr = Math.min(cnt * .0025, .06);
   a.x += nx * corr * mb / (ma + mb); a.z += nz * corr * mb / (ma + mb);
@@ -505,55 +540,147 @@ function collide(a, b) {
   const kt = 1 / ma + 1 / mb + pat * pat / Ia + pbt * pbt / Ib;
   let jt = -vt / kt; jt = Math.max(-MU * j, Math.min(MU * j, jt));
   const Jx = (nx * j + tx * jt) * BOOST, Jz = (nz * j + tz * jt) * BOOST;
-  a.vx += Jx / ma; a.vz += Jz / ma; b.vx -= Jx / mb; b.vz -= Jz / mb;
+  // 「ダッシュ」中のコマにぶつけられた側は、2倍強く弾かれる
+  const da = b.dash > 0 ? 2 : 1, db = a.dash > 0 ? 2 : 1;
+  a.vx += Jx / ma * da; a.vz += Jz / ma * da; b.vx -= Jx / mb * db; b.vz -= Jz / mb * db;
   a.w += (pax * Jx + paz * Jz) / Ia; b.w -= (pbx * Jx + pbz * Jz) / Ib;
   // 逆回転にはならない（ぶつかって止まるだけ）
   a.w = Math.max(0, a.w); b.w = Math.max(0, b.w);
   _hits.push({ x: cx, z: cz, j: j * BOOST });
 }
 
-const STARTS = [[-3.2, 1.2], [3.2, -1.2]];   // tops[0] と tops[1] の発射位置
-function newBattle(gYou, gFoe, pYou, pFoe, aYou, aFoe) {
-  return {
-    t: 0, over: false,
-    tops: [makeTop(gYou, STARTS[0][0], STARTS[0][1], pYou, 'you', aYou),
-           makeTop(gFoe, STARTS[1][0], STARTS[1][1], pFoe, 'foe', aFoe)],
-  };
+// 発射位置：人数に応じて円周上に等間隔に並べる（2人なら左手前と右奥）
+const START_R = 3.4;
+function startPos(i, n) {
+  const a = Math.PI - .36 + i * Math.PI * 2 / n;
+  return [Math.cos(a) * START_R, Math.sin(a) * START_R];
+}
+// entries: [{ g, p, a, gone }]。p は強さ（0〜1）、a は射出角、gone は最初から不参加（退出済み）
+function newBattle(entries) {
+  const n = entries.length;
+  const tops = entries.map((e, i) => {
+    const [x, z] = startPos(i, n);
+    const t = makeTop(e.g, x, z, e.p, i, e.a, e.skill);
+    if (e.gone) { t.state = 'out'; t.y = -60; t.vx = t.vz = 0; t.reason = '退出'; t.outAt = 0; }
+    return t;
+  });
+  return { t: 0, over: false, tops, events: [] };
 }
 const SUB = 4, DT = 1 / 60 / SUB;
+const ratio = t => t.w / t.w0;
 function stepBattle(B) {
+  const T = B.tops;
   for (let s = 0; s < SUB; s++) {
-    for (const t of B.tops) stepTop(t, DT);
-    collide(B.tops[0], B.tops[1]);
+    for (const t of T) stepTop(t, DT);
+    for (let i = 0; i < T.length; i++) for (let j = i + 1; j < T.length; j++) collide(T[i], T[j]);
   }
   B.t += 1 / 60;
-  if (!B.over) {
-    const [y, f] = B.tops;
-    const yDead = y.state !== 'spin', fDead = f.state !== 'spin';
-    if (yDead || fDead) {
-      B.over = true;
-      if (yDead && fDead) B.winner = (y.w / y.w0 >= f.w / f.w0) ? 'you' : 'foe';
-      else B.winner = yDead ? 'foe' : 'you';
-      B.reason = (B.winner === 'you' ? f : y).reason;
-      B.overAt = B.t;
-    } else if (B.t >= MATCH_TIME) {
-      B.over = true; B.overAt = B.t;
-      B.winner = (y.w / y.w0 >= f.w / f.w0) ? 'you' : 'foe';
-      B.reason = '時間切れ（残り回転の割合で判定）';
+  if (B.over) return;
+  for (const t of T) if (t.state !== 'spin' && t.outAt == null) t.outAt = B.t;
+  const alive = T.filter(t => t.state === 'spin');
+  let win = null;
+  if (alive.length <= 1) {
+    if (alive.length === 1) win = alive[0];
+    else {
+      // 最後の脱落が同時なら、その中で回転が多く残っていた方の勝ち
+      const lastAt = Math.max(...T.map(t => t.outAt));
+      win = T.filter(t => t.outAt === lastAt).sort((a, b) => ratio(b) - ratio(a))[0];
+    }
+    const others = T.filter(t => t !== win && t.reason !== '退出').sort((a, b) => b.outAt - a.outAt);
+    B.code = others.length ? reasonCode(others[0].reason) : 'left';
+  } else if (B.t >= MATCH_TIME) {
+    win = alive.slice().sort((a, b) => ratio(b) - ratio(a))[0];
+    B.code = 'time';
+  }
+  if (!win) return;
+  B.over = true; B.overAt = B.t;
+  B.winIdx = T.indexOf(win);
+  // 順位：勝者、まだ回っていた順（回転の割合）、脱落が遅い順
+  B.order = T.map((t, i) => i).sort((a, b) => {
+    if (a === B.winIdx) return -1; if (b === B.winIdx) return 1;
+    const ta = T[a], tb = T[b];
+    const sa = ta.state === 'spin', sb = tb.state === 'spin';
+    if (sa !== sb) return sa ? -1 : 1;
+    if (sa) return ratio(tb) - ratio(ta);
+    return (tb.outAt || 0) - (ta.outAt || 0);
+  });
+}
+const reasonCode = text => text === '場外' ? 'out' : text === 'スピンアウト' ? 'spin' : text === '退出' ? 'left' : 'time';
+
+// ───────── スキル ─────────
+// 対戦前に1つ選んで装備し、対戦中に使う。cd はクールダウン（秒）、uses は1試合で使える回数
+const SKILLS = {
+  dash:   { name: 'ダッシュ',     desc: 'いちばん近い相手に突進し、1.5秒間ぶつかる力が2倍になる', cd: 5 },
+  guard:  { name: '踏ん張り',     desc: '2秒間、重さが2.5倍になり弾かれにくくなる', cd: 15 },
+  shock:  { name: '衝撃波',       desc: '近くの相手をまとめて吹き飛ばし、回転も少し奪う', cd: 9 },
+  charge: { name: '回転チャージ', desc: '回転を最大の20%ぶん取り戻す',             uses: 2 },
+  center: { name: '中央復帰',     desc: 'スタジアムの中央へ向きを変えて場外を防ぐ', uses: 3 },
+};
+const SKILL_IDS = Object.keys(SKILLS);
+const skillLimit = id => SKILLS[id].cd ? `クールダウン${SKILLS[id].cd}秒` : `1試合${SKILLS[id].uses}回まで`;
+const skillReady = (B, t) => !B.over && t.state === 'spin' && B.t >= t.cdUntil && t.uses > 0;
+
+function useSkill(B, i) {
+  const t = B.tops[i];
+  if (!t || !skillReady(B, t)) return false;
+  const others = B.tops.filter(o => o !== t && o.state === 'spin');
+  const dist = o => Math.hypot(o.x - t.x, o.z - t.z);
+  switch (t.skill) {
+    case 'dash': {
+      const tgt = others.slice().sort((a, b) => dist(a) - dist(b))[0];
+      let dx, dz;
+      if (tgt) { dx = tgt.x - t.x; dz = tgt.z - t.z; } else { dx = t.vx; dz = t.vz; }
+      const d = Math.hypot(dx, dz) || 1;
+      t.vx = dx / d * 8; t.vz = dz / d * 8;
+      t.dash = 1.5;
+      break;
+    }
+    case 'guard': t.guard = 2; break;
+    case 'shock':
+      for (const o of others) {
+        const d = dist(o);
+        if (d > 4 || d < 1e-4) continue;
+        const k = (10 * (1 - d / 4) + 4) / (o.guard > 0 ? 2.5 : 1);
+        o.vx += (o.x - t.x) / d * k; o.vz += (o.z - t.z) / d * k;
+        o.w *= o.guard > 0 ? .97 : .92;
+      }
+      t.w *= .97;   // 使うと回転を少し消費する
+      break;
+    case 'charge': t.w = Math.min(t.w0, t.w + t.w0 * .2); break;
+    case 'center': {
+      const r = Math.hypot(t.x, t.z);
+      if (r > .3) { t.vx = -t.x / r * 4.5; t.vz = -t.z / r * 4.5; }
+      break;
     }
   }
+  if (SKILLS[t.skill].cd) t.cdUntil = B.t + SKILLS[t.skill].cd;
+  if (SKILLS[t.skill].uses) t.uses--;
+  B.events.push([i, t.skill]);
+  return true;
+}
+
+// CPU のスキルの使いどころ
+function cpuSkillAI(B, i) {
+  const t = B.tops[i];
+  if (!skillReady(B, t)) return;
+  const others = B.tops.filter(o => o !== t && o.state === 'spin');
+  const near = others.reduce((m, o) => Math.min(m, Math.hypot(o.x - t.x, o.z - t.z)), 99);
+  const go = {
+    dash: near < 6 && Math.random() < .3,
+    guard: near < 2.3,
+    shock: near < 2.6,
+    charge: ratio(t) < .4,
+    center: Math.hypot(t.x, t.z) > 4.2,
+  }[t.skill];
+  if (go) useSkill(B, i);
 }
 
 // 画面なしで最後まで回す（動作確認用）
-window.__simulate = (chA, fontA, chB, fontB, pA = .85, pB = .85) => {
-  const B = newBattle(analyzeGlyph(chA, fontA), analyzeGlyph(chB, fontB), pA, pB);
-  let vmax = 0, rmax = 0, hits = 0, jmax = 0;
-  while (!B.over) {
-    stepBattle(B);
-    for (const t of B.tops) { vmax = Math.max(vmax, Math.hypot(t.vx, t.vz)); rmax = Math.max(rmax, Math.hypot(t.x, t.z)); }
-    hits += _hits.length; for (const h of _hits) jmax = Math.max(jmax, h.j); _hits.length = 0;
-  }
-  return { winner: B.winner, reason: B.reason, t: +B.t.toFixed(1), hits, vmax: +vmax.toFixed(1), rmax: +rmax.toFixed(2), jmax: +jmax.toFixed(2) };
+window.__simulate = (list, ps) => {
+  const B = newBattle(list.map(([ch, f, sk], i) => ({ g: analyzeGlyph(ch, f), p: ps ? ps[i] : .85, skill: sk })));
+  let hits = 0, k = 0;
+  while (!B.over) { stepBattle(B); hits += _hits.length; _hits.length = 0; if (++k % 15 === 0) for (let i = 0; i < B.tops.length; i++) cpuSkillAI(B, i); }
+  return { winIdx: B.winIdx, code: B.code, order: B.order, t: +B.t.toFixed(1), hits };
 };
 window.__analyze = (ch, f) => { const g = analyzeGlyph(ch, f); return { area: +g.area.toFixed(3), maxR: +g.maxR.toFixed(3), round: +g.round.toFixed(3), ecc: +g.ecc.toFixed(3), I: +g.inertia.toFixed(3), decay45: +spinDecayRate(g, 45).toFixed(3), ...ratings(g) }; };
 
@@ -735,7 +862,11 @@ if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(document.g
 // ───────── 画面と進行 ─────────
 const $ = id => document.getElementById(id);
 const CPU_POOL = ['〇', '山', '鬼', '米', '田', '永', '風', '龍', '卍', '口', '十', '円', '雷', '剣', '王', '火', '水', '木', '金', '土', '門', '愛', '傘', '嵐', '轟', '鬱', '一', '乙', '凸', '凹', '回', '串', 'W', 'S', '@', '★', '巴', '輪', '鑑', '黒'];
-const COLOR_ME = 0xe9724c, COLOR_FOE = 0x4cb3e9;
+const COLOR_ME = 0xe9724c;
+// 相手の色（各自の画面では自分が橙、ほかの人は登場順に青・緑・紫）
+const FOE_COLORS = [0x4cb3e9, 0x7fcf8a, 0xc49af2];
+const FOE_CSS = ['var(--foe)', 'var(--foe2)', 'var(--foe3)'];
+const MAX_PLAYERS = 4;
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -743,19 +874,20 @@ const store = {
 };
 
 const S = {
-  ch: store.get('mg.ch', '龍'), font: store.get('mg.font', 'gothic'),
-  foeCh: '〇', foeFont: 'maru',
-  g: null, foeG: null, streak: 0,
+  ch: store.get('mg.ch', '龍'), font: store.get('mg.font', 'gothic'), skill: store.get('mg.skill', 'dash'),
+  g: null, streak: 0,
+  cpuN: Math.max(1, Math.min(3, store.get('mg.cpuN', 1) | 0)), cpus: [],
   kind: 'cpu',            // 'cpu' | 'online'
+  players: [],            // この試合の参加者（battle.tops と同じ順）
   myIdx: 0,               // 自分のコマが battle.tops の何番目か
   mode: 'idle', battle: null, meshes: [], idle: null, idleMesh: null,
-  gauge: 0, gaugeDir: 1, launchAt: 0,
+  gauge: 0, gaugeDir: 1, launchAt: 0, stage: null, preview: null, hud: [], aiAt: 0, skillLabel: '',
 };
+if (!SKILLS[S.skill]) S.skill = 'dash';
 $('charInput').value = S.ch;
 
 // 勝敗理由はコードでやりとりし、表示文は各自の画面で組み立てる
 const REASON = { out: '場外', spin: 'スピンアウト', time: '時間切れ', left: '退出' };
-const reasonCode = text => text === '場外' ? 'out' : text === 'スピンアウト' ? 'spin' : 'time';
 
 function renderFontChips() {
   const box = $('fonts'); box.innerHTML = '';
@@ -768,6 +900,21 @@ function renderFontChips() {
     b.addEventListener('click', () => { S.font = f.id; store.set('mg.font', f.id); renderFontChips(); refreshGlyph(); });
     box.appendChild(b);
   }
+}
+
+function renderSkills() {
+  const box = $('skills'); box.innerHTML = '';
+  for (const id of SKILL_IDS) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip'; b.textContent = SKILLS[id].name;
+    b.setAttribute('aria-pressed', String(id === S.skill));
+    b.addEventListener('click', () => {
+      S.skill = id; store.set('mg.skill', id); renderSkills();
+      if (ON.R) { ON.R.presence({ skill: id }).catch(() => {}); updateRoomUI(); }
+    });
+    box.appendChild(b);
+  }
+  $('skillDesc').textContent = `${SKILLS[S.skill].desc}（${skillLimit(S.skill)}）`;
 }
 
 function drawPreview(g) {
@@ -789,9 +936,10 @@ function showStats(g) {
   $('raw').textContent = `面積 ${(g.area / 4 * 100).toFixed(0)}%　半径 ${g.maxR.toFixed(2)}　偏り ${g.ecc.toFixed(3)}`;
 }
 
-function streakKey() { return `mg.best.${S.ch}.${S.font}`; }
+// 連勝記録は文字・書体・CPUの数ごとに分ける
+function streakKey() { return `mg.best.${S.ch}.${S.font}.${S.cpuN}`; }
 function showStreak() {
-  $('streak').textContent = `連勝 ${S.streak}　この文字・書体の最高 ${store.get(streakKey(), 0)}`;
+  $('streak').textContent = `連勝 ${S.streak}　この文字・書体・CPU${S.cpuN}体での最高 ${store.get(streakKey(), 0)}`;
 }
 
 let glyphToken = 0;
@@ -826,15 +974,41 @@ function setGlyphEl(el, ch, fontId) {
   el.textContent = ch; el.style.fontFamily = cssFamily(fontId); el.style.fontWeight = fontById(fontId).w;
 }
 
-async function rerollFoe() {
-  let ch;
-  do { ch = CPU_POOL[Math.floor(Math.random() * CPU_POOL.length)]; } while (ch === S.foeCh);
-  const f = FONTS[Math.floor(Math.random() * FONTS.length)].id;
-  S.foeCh = ch; S.foeFont = f;
-  setGlyphEl($('foeGlyph'), ch, f);
-  $('foeWho').textContent = `CPU・${fontById(f).name}`;
-  await ensureFont(fontById(f), ch);
-  S.foeG = analyzeGlyph(ch, f);
+// ── CPU ──
+function renderCpuCount() {
+  const box = $('cpuCount'); box.innerHTML = '';
+  for (let n = 1; n <= 3; n++) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip'; b.textContent = `${n}体`;
+    b.setAttribute('aria-pressed', String(n === S.cpuN));
+    b.addEventListener('click', () => { S.cpuN = n; store.set('mg.cpuN', n); S.streak = 0; renderCpuCount(); showStreak(); rerollCpus(); });
+    box.appendChild(b);
+  }
+}
+
+let cpuToken = 0;
+async function rerollCpus() {
+  const token = ++cpuToken;
+  const used = new Set(S.cpus.map(c => c.ch));
+  const list = [];
+  while (list.length < S.cpuN) {
+    const ch = CPU_POOL[Math.floor(Math.random() * CPU_POOL.length)];
+    if (used.has(ch) || list.some(c => c.ch === ch)) continue;
+    list.push({ ch, font: FONTS[Math.floor(Math.random() * FONTS.length)].id, skill: SKILL_IDS[Math.floor(Math.random() * SKILL_IDS.length)], g: null });
+  }
+  S.cpus = list;
+  renderCpuList();
+  await Promise.all(list.map(async c => { await ensureFont(fontById(c.font), c.ch); c.g = analyzeGlyph(c.ch, c.font); }));
+  if (token === cpuToken) updateButtons();
+}
+function renderCpuList() {
+  const box = $('cpuList'); box.innerHTML = '';
+  S.cpus.forEach((c, i) => {
+    const d = document.createElement('div');
+    d.className = 'glyph'; setGlyphEl(d, c.ch, c.font); d.style.color = FOE_CSS[i];
+    d.title = `CPU・${fontById(c.font).name}・${SKILLS[c.skill].name}`;
+    box.appendChild(d);
+  });
 }
 
 // 待機中：自分のコマを中央でゆっくり回して見せる
@@ -847,45 +1021,94 @@ function setIdle(g) {
 
 function clearBattleMeshes() { for (const m of S.meshes) m.dispose(); S.meshes = []; }
 
-// 発射画面へ。foe は相手の文字（CPU か、オンラインの相手）
-function toLaunch(foeCh, foeFont, foeG) {
+// 自分は橙、ほかの人は登場順に青・緑・紫
+function colorize(players, myIdx) {
+  let k = 0;
+  players.forEach((p, i) => {
+    if (i === myIdx) { p.color = COLOR_ME; p.css = 'var(--you)'; }
+    else { p.color = FOE_COLORS[k % 3]; p.css = FOE_CSS[k % 3]; k++; }
+  });
+}
+
+function buildHud() {
+  const P = S.players;
+  setGlyphEl($('hudYou'), S.ch, S.font);
+  S.hud = [];
+  S.hud[S.myIdx] = { side: $('hudMe'), bar: $('spinYou') };
+  $('hudMe').classList.remove('out');
+  const box = $('hudFoes'); box.innerHTML = '';
+  P.forEach((p, i) => {
+    if (i === S.myIdx) return;
+    const side = document.createElement('div'); side.className = 'side r';
+    const g = document.createElement('span'); g.className = 'g'; setGlyphEl(g, p.ch, p.font); g.style.color = p.css;
+    const sp = document.createElement('div'); sp.className = 'spin';
+    const bar = document.createElement('i'); bar.style.background = p.css; bar.style.width = '0%';
+    sp.append(bar); side.append(g, sp); box.append(side);
+    S.hud[i] = { side, bar };
+  });
+  $('spinYou').style.width = '0%';
+}
+
+// 発射画面へ。players は [{ ch, font, g, skill }]（battle.tops と同じ順）
+function toLaunch(players, myIdx) {
   initAudio();
+  S.players = players; S.myIdx = myIdx;
+  colorize(players, myIdx);
   S.mode = 'launch';
   document.body.classList.add('playing'); resize();
   window.scrollTo(0, 0);
   if (S.idleMesh) { S.idleMesh.dispose(); S.idleMesh = null; }
   clearBattleMeshes();
-  $('setup').hidden = true; $('result').hidden = true;
+  $('setup').hidden = true; $('result').hidden = true; $('skillBar').hidden = true; $('toast').hidden = true;
   $('launch').hidden = false; $('hud').hidden = false; $('shoot').hidden = false;
   $('launchMsg').textContent = 'ゲージが右端近くで止まるほど強く回ります';
-  setGlyphEl($('hudYou'), S.ch, S.font); setGlyphEl($('hudFoe'), foeCh, foeFont);
+  buildHud();
   $('timer').textContent = MATCH_TIME;
-  $('spinYou').style.width = '0%'; $('spinFoe').style.width = '0%';
   placeChat();
   S.gauge = 0; S.gaugeDir = 1; S.launchAt = performance.now();
-  // 発射位置に両方のコマを置いて見せる
+  // 発射位置に全員のコマを置いて見せる
   S.stage = 'power'; S.lockedPower = null;
-  const mine = STARTS[S.myIdx], theirs = STARTS[1 - S.myIdx];
-  S.preview = [
-    { g: S.g, x: mine[0], z: mine[1], y: 0, th: 0, w: 12, w0: 12, state: 'spin', prec: 0, fall: 0 },
-    { g: foeG, x: theirs[0], z: theirs[1], y: 0, th: 0, w: 12, w0: 12, state: 'spin', prec: 0, fall: 0 },
-  ];
-  S.meshes = [buildTopMesh(S.g, COLOR_ME), buildTopMesh(foeG, COLOR_FOE)];
+  const n = players.length;
+  S.preview = players.map((p, i) => {
+    const [x, z] = startPos(i, n);
+    return { g: p.g, x, z, y: 0, th: 0, w: 12, w0: 12, state: 'spin', prec: 0, fall: 0 };
+  });
+  S.meshes = players.map(p => buildTopMesh(p.g, p.color));
   // 矢印は最初に中心を向く
-  S.aim = Math.atan2(-mine[1], -mine[0]);
+  const [mx, mz] = startPos(myIdx, n);
+  S.aim = Math.atan2(-mz, -mx);
   aimArrow.visible = false;
   $('shoot').textContent = '強さを決める';
   $('shoot').focus();
 }
 
 function startCpu() {
-  if (!S.g || !S.foeG || ON.R) return;
-  S.kind = 'cpu'; S.myIdx = 0;
-  toLaunch(S.foeCh, S.foeFont, S.foeG);
+  if (!S.g || ON.R || S.cpus.length !== S.cpuN || S.cpus.some(c => !c.g)) return;
+  S.kind = 'cpu';
+  toLaunch([{ ch: S.ch, font: S.font, g: S.g, skill: S.skill }, ...S.cpus.map(c => ({ ch: c.ch, font: c.font, g: c.g, skill: c.skill }))], 0);
 }
 
 // ゲージは88%付近が最大。行き過ぎると弱くなる
 const gaugePower = () => clamp01(1 - Math.abs(S.gauge - .88) / .88);
+
+// CPU は誰か1人を選んで、そのあたりを狙う
+function cpuAim(i, n) {
+  let j;
+  do { j = Math.floor(Math.random() * n); } while (j === i);
+  const [x, z] = startPos(i, n), [tx, tz] = startPos(j, n);
+  return Math.atan2(tz - z, tx - x) + (Math.random() - .5) * 1.2;
+}
+
+function startBattleMeshes() {
+  clearBattleMeshes();
+  S.meshes = S.players.map(p => buildTopMesh(p.g, p.color));
+  S.mode = 'battle'; S.preview = null; S.aiAt = 0; S.skillLabel = '';
+  $('launch').hidden = true;
+  $('skillBar').hidden = false;
+  $('skillBtn').disabled = true;
+  $('skillBtn').textContent = SKILLS[S.players[S.myIdx].skill].name;
+  $('skillBtn').focus({ preventScroll: true });
+}
 
 // 1回目のタップで強さ、2回目のタップで角度を決めて打ち出す
 function shoot() {
@@ -903,37 +1126,97 @@ function shoot() {
   aimArrow.visible = false;
   const p = S.lockedPower, a = Math.round(S.aim * 1000) / 1000;
   if (S.kind === 'cpu') {
-    // CPU はだいたい相手のほうを狙う
-    const [cx, cz] = STARTS[1], [px, pz] = STARTS[0];
-    const cpuAim = Math.atan2(pz - cz, px - cx) + (Math.random() - .5) * 1.4;
-    S.battle = newBattle(S.g, S.foeG, p, .55 + Math.random() * .4, a, cpuAim);
-    clearBattleMeshes();
-    S.meshes = [buildTopMesh(S.g, COLOR_ME), buildTopMesh(S.foeG, COLOR_FOE)];
-    S.mode = 'battle'; S.preview = null;
-    $('launch').hidden = true;
+    const n = S.players.length;
+    S.battle = newBattle(S.players.map((pl, i) => i === 0
+      ? { g: pl.g, p, a, skill: pl.skill }
+      : { g: pl.g, p: .55 + Math.random() * .4, a: cpuAim(i, n), skill: pl.skill }));
+    startBattleMeshes();
     return;
   }
   if (ON.myShot != null) return;
   ON.myShot = { p, a };
   $('shoot').hidden = true;
-  $('launchMsg').textContent = '相手のシュートを待っています';
+  $('launchMsg').textContent = 'ほかの人のシュートを待っています';
   if (ON.role === 'host') hostTick();
   else ON.R.presence({ shot: { m: ON.m, p, a } }).catch(() => {});
+}
+
+// ── スキル ──
+function pressSkill() {
+  const B = S.battle;
+  if (S.mode !== 'battle' || !B || B.over) return;
+  if (B.remote) {
+    // ゲストはホストに「使った」と伝えるだけ。使えるかどうかはホストが判定する
+    const t = B.tops[S.myIdx];
+    if (!t || t.state !== 'spin' || t.cdLeft > 0 || t.uses <= 0) return;
+    ON.skN = (ON.skN || 0) + 1;
+    ON.R.presence({ sk: { m: ON.m, n: ON.skN } }).catch(() => {});
+    return;
+  }
+  useSkill(B, S.myIdx);
+}
+
+function showSkillToast(i, id) {
+  const p = S.players[i], el = $('toast');
+  if (!p || !SKILLS[id]) return;
+  el.hidden = true;
+  el.textContent = `${p.ch}　${SKILLS[id].name}！`;
+  el.style.color = p.css;
+  void el.offsetWidth;   // アニメーションを最初から流し直す
+  el.hidden = false;
+  const t = S.battle && S.battle.tops[i];
+  if (t) burst(t.x, .6, t.z, id === 'shock' ? 40 : 16, 2);
+}
+
+function updateSkillBtn() {
+  const B = S.battle, t = B && B.tops[S.myIdx];
+  if (!t) return;
+  const id = S.players[S.myIdx].skill;
+  const cdLeft = B.remote ? t.cdLeft : Math.max(0, t.cdUntil - B.t);
+  const uses = B.remote ? t.uses : t.uses;
+  let label = SKILLS[id].name;
+  if (SKILLS[id].uses) label += `　残り${uses}回`;
+  if (cdLeft > 0 && uses > 0) label += `　${cdLeft.toFixed(1)}秒`;
+  const off = B.over || t.state !== 'spin' || cdLeft > 0 || uses <= 0;
+  if (label !== S.skillLabel) { $('skillBtn').textContent = label; S.skillLabel = label; }
+  $('skillBtn').disabled = off;
+}
+
+// ── 結果 ──
+function myReasonText(B) {
+  const t = B.tops[S.myIdx];
+  if (t.state === 'out') return t.reason === '退出' ? '退出' : '場外';
+  if (t.state === 'down') return 'スピンアウト';
+  return '最後まで回っていました';
 }
 
 function finish() {
   const B = S.battle;
   S.mode = 'result';
-  const winIdx = B.winIdx != null ? B.winIdx : (B.winner === 'you' ? 0 : 1);
-  const code = B.code || reasonCode(B.reason);
+  const n = S.players.length;
+  const winIdx = B.winIdx | 0;
+  const code = B.code || 'time';
   const win = winIdx === S.myIdx;
-  let reason;
-  if (code === 'time') reason = '時間切れ（残り回転の割合で判定）';
-  else if (code === 'left') reason = '相手が退出しました';
-  else reason = `${win ? '相手' : 'あなた'}の${REASON[code]}（${(B.overAt || 0).toFixed(1)}秒）`;
+  const order = Array.isArray(B.order) && B.order.length === n ? B.order : [winIdx];
+  let rank = order.indexOf(S.myIdx) + 1;
+  if (rank <= 0) rank = n;
+  let verdict, reason;
+  if (n === 2) {
+    verdict = win ? '勝' : '負';
+    if (code === 'time') reason = '時間切れ（残り回転の割合で判定）';
+    else if (code === 'left') reason = '相手が退出しました';
+    else reason = `${win ? '相手' : 'あなた'}の${REASON[code]}（${(B.overAt || 0).toFixed(1)}秒）`;
+  } else if (win) {
+    verdict = '勝';
+    reason = code === 'time' ? '時間切れ（残り回転の割合で判定）で1位' : `最後まで回り続けました（${(B.overAt || 0).toFixed(1)}秒）`;
+  } else {
+    verdict = `${rank}位`;
+    reason = `「${S.players[winIdx].ch}」の勝ち。あなたは${myReasonText(B)}`;
+  }
+  $('verdict').textContent = verdict;
+  $('verdict').style.color = win ? 'var(--you)' : (S.players[winIdx] ? S.players[winIdx].css : 'var(--foe)');
   $('reason').textContent = reason;
-  $('verdict').textContent = win ? '勝' : '負';
-  $('verdict').style.color = win ? 'var(--you)' : 'var(--foe)';
+  $('skillBar').hidden = true;
   if (S.kind === 'cpu') {
     if (win) {
       S.streak++;
@@ -942,7 +1225,6 @@ function finish() {
     $('resStreak').textContent = `連勝 ${S.streak}　最高 ${store.get(streakKey(), 0)}`;
     $('next').textContent = win ? '次の相手' : '新しい相手で挑む';
     $('again').hidden = false;
-    $('change').textContent = '字を選びなおす';
   } else {
     ON.rec[win ? 'w' : 'l']++;
     if (ON.role === 'host') {
@@ -952,8 +1234,8 @@ function finish() {
     $('resStreak').textContent = `この部屋の成績 ${ON.rec.w}勝 ${ON.rec.l}敗`;
     $('next').textContent = 'もう一度';
     $('again').hidden = true;
-    $('change').textContent = '字を選びなおす';
   }
+  $('change').textContent = '字を選びなおす';
   $('result').hidden = false;
   $('next').focus();
 }
@@ -964,7 +1246,8 @@ function backToSetup() {
   S.battle = null;
   S.mode = 'idle';
   document.body.classList.remove('playing'); resize();
-  $('result').hidden = true; $('hud').hidden = true; $('launch').hidden = true; $('setup').hidden = false;
+  $('result').hidden = true; $('hud').hidden = true; $('launch').hidden = true; $('skillBar').hidden = true; $('toast').hidden = true;
+  $('setup').hidden = false;
   showStreak();
   if (S.g) setIdle(S.g);
   placeChat();
@@ -972,19 +1255,24 @@ function backToSetup() {
 }
 
 // ───────── チャット ─────────
-// 相手とのチャットも presence で運ぶ（各自が直近6件を自分の状態として載せ、相手は未表示の分だけ出す）。
+// チャットも presence で運ぶ（各自が直近6件を自分の状態として載せ、ほかの人は未表示の分だけ出す）。
 // claude.ai の閲覧のみの共有相手でも送れて、PeerJS 版でも同じ仕組みで動く。
-const CHAT = { mine: [], seq: 0, seen: new Map(), lastSend: 0, oppPeer: null };
-const CHAT_STRIP = /[\p{Cc}\p{Co}\p{Cs}\u00AD\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/gu;
+const CHAT = { mine: [], seq: 0, seen: new Map(), known: new Map(), lastSend: 0 };
+const CHAT_STRIP = /[\p{Cc}\p{Co}\p{Cs}­​‌‎‏‪-‮⁠-⁯﻿]/gu;
 function cleanText(v) {
   if (typeof v !== 'string') return '';
   return Array.from(v.replace(CHAT_STRIP, '').replace(/\s+/g, ' ').trim()).slice(0, 50).join('');
 }
-function addChatLine(who, text) {
+function addChatLine(kind, text, label, css) {
   const log = $('chatLog');
   const row = document.createElement('div');
-  row.className = 'line ' + who;
-  if (who !== 'sys') { const b = document.createElement('b'); b.textContent = who === 'me' ? '自分' : '相手'; row.append(b); }
+  row.className = 'line ' + kind;
+  if (kind !== 'sys') {
+    const b = document.createElement('b');
+    b.textContent = kind === 'me' ? '自分' : label;
+    if (css) b.style.color = css;
+    row.append(b);
+  }
   const sp = document.createElement('span'); sp.textContent = text; row.append(sp);
   log.append(row);
   while (log.children.length > 60) log.firstChild.remove();
@@ -998,7 +1286,7 @@ function chatToBottom() {
 }
 if (window.ResizeObserver) new ResizeObserver(() => chatToBottom()).observe($('chatLog'));
 function resetChat() {
-  CHAT.mine = []; CHAT.seq = 0; CHAT.seen.clear(); CHAT.oppPeer = null;
+  CHAT.mine = []; CHAT.seq = 0; CHAT.seen.clear(); CHAT.known.clear();
   $('chatLog').textContent = ''; $('chatIn').value = '';
 }
 function sendChat(e) {
@@ -1015,51 +1303,62 @@ function sendChat(e) {
   addChatLine('me', t);
   $('chatIn').value = '';
 }
-function chatSync(opp) {
-  const peer = opp ? opp.peer : null;
-  if (peer !== CHAT.oppPeer) {
-    if (CHAT.oppPeer && !peer) addChatLine('sys', '相手が退出しました');
-    if (peer) addChatLine('sys', '相手が入室しました');
-    CHAT.oppPeer = peer;
+function chatSync(others) {
+  const now = new Set();
+  for (const p of others) {
+    const pr = p.presence || {};
+    const ch = cleanCh(pr.ch) || '？';
+    now.add(p.peer);
+    if (!CHAT.known.has(p.peer)) addChatLine('sys', `「${ch}」が入室しました`);
+    CHAT.known.set(p.peer, ch);
+    const arr = pr.chat;
+    if (!Array.isArray(arr)) continue;
+    let seen = CHAT.seen.get(p.peer) || 0;
+    for (const m of arr.slice(-6)) {
+      if (!Array.isArray(m)) continue;
+      const i = num(m[0], 0, 1e9, 0);
+      if (i <= seen) continue;
+      seen = i;
+      const t = cleanText(m[1]);
+      if (t) addChatLine('opp', t, ch, colorForPeer(p.peer));
+    }
+    CHAT.seen.set(p.peer, seen);
   }
-  if (!opp) return;
-  const arr = opp.presence && opp.presence.chat;
-  if (!Array.isArray(arr)) return;
-  let seen = CHAT.seen.get(peer) || 0;
-  for (const m of arr.slice(-6)) {
-    if (!Array.isArray(m)) continue;
-    const i = num(m[0], 0, 1e9, 0);
-    if (i <= seen) continue;
-    seen = i;
-    const t = cleanText(m[1]);
-    if (t) addChatLine('opp', t);
+  for (const [peer, ch] of CHAT.known) {
+    if (!now.has(peer)) { addChatLine('sys', `「${ch}」が退出しました`); CHAT.known.delete(peer); CHAT.seen.delete(peer); }
   }
-  CHAT.seen.set(peer, seen);
 }
-// 対戦中はスタジアムの上へ、待機中はルームの欄へチャットを移す
+// 対戦中はスタジアムの上（HUD のすぐ下）へ、待機中はルームの欄へチャットを移す
 function placeChat() {
   const chat = $('chat');
   const floating = !!ON.R && S.mode !== 'idle';
   chat.classList.toggle('float', floating);
-  if (floating) $('arena').insertBefore(chat, $('result'));
-  else $('onIn').append(chat);
+  if (floating) {
+    $('arena').insertBefore(chat, $('result'));
+    const hud = $('hud');
+    chat.style.top = hud.hidden ? '' : `${hud.offsetTop + hud.offsetHeight + 8}px`;
+  } else {
+    chat.style.top = '';
+    $('onIn').append(chat);
+  }
   chatToBottom();
 }
 
 // ───────── オンライン対戦 ─────────
-// claude.ai の room 機能で、同じルーム番号を開いた2人をつなぐ。
-// ルームを作った側（ホスト）が物理計算を行い、結果の状態を presence で流す。
-// 参加した側（ゲスト）はその状態を受け取って描画するだけ。
+// 同じルーム番号を開いた最大4人をつなぐ。claude.ai の中では room 機能、外では PeerJS を使う。
+// ルームを作った人（ホスト）が物理計算を行い、結果の状態を presence で流す。
+// 参加した人（ゲスト）は強さ・角度・スキルの使用を送り、届いた状態を描画する。
 // presence は閲覧のみの共有相手でも送れるため、イベント送信の権限設定は不要。
 const ON = {
-  room: null, R: null, role: null, code: '', me: null,
-  opp: null, oppPeer: null, oppCh: null, oppFont: null, oppG: null, oppKey: '',
-  ready: false, m: 0, phase: 'lobby', myShot: null,
-  rec: { w: 0, l: 0 }, sentAt: 0, hitSeq: 0, seenHit: 0, hits: [], full: false, joinedAt: 0,
+  room: null, R: null, role: null, code: '', me: null, hostPeer: null,
+  seats: [], members: [], glyphs: new Map(),
+  ready: false, m: 0, phase: 'lobby', players: [], gone: new Set(), myShot: null,
+  rec: { w: 0, l: 0 }, sentAt: 0, hitSeq: 0, seenHit: 0, evSeq: 0, seenEv: 0, hits: [], evs: [],
+  skLast: new Map(), skPend: new Map(), skN: 0, full: false,
 };
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-// 相手から届く値はすべて信用せず、型と範囲を確かめてから使う
+// ほかの人から届く値はすべて信用せず、型と範囲を確かめてから使う
 const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
 function cleanCh(v) {
   if (typeof v !== 'string') return null;
@@ -1067,15 +1366,18 @@ function cleanCh(v) {
   return c && !/[\s\p{C}]/u.test(c) ? c : null;
 }
 const cleanFont = v => FONTS.some(f => f.id === v) ? v : null;
+const cleanSkill = v => SKILLS[v] ? v : 'dash';
 
 function onMsg(t) { $('onMsg').textContent = t; $('onMsg').hidden = !t; }
 
 // claude.ai の外（GitHub Pages など）では PeerJS でブラウザどうしを直接つなぐ。
 // ゲーム側からは claude.ai の room と同じ形（join / presence / peers / onPeers / leave）に見えるようにする。
+// ゲストはホストとだけつながり、ホストが各ゲストの状態をほかのゲストへ中継する。
 // 合図のやりとりには PeerJS の無料公開サーバー、つながりにくい回線では PeerJS の中継（TURN）サーバーが使われる。
 function peerRoomAdapter() {
   if (typeof window.Peer !== 'function') return null;
   const opts = window.__PEER_OPTS || {};
+  const okPres = p => p && typeof p === 'object' && !Array.isArray(p) && JSON.stringify(p).length <= 8192;
   return {
     join(name, role) {
       return new Promise((resolve, reject) => {
@@ -1083,21 +1385,63 @@ function peerRoomAdapter() {
         const peer = role === 'host' ? new Peer(hostId, opts) : new Peer(opts);
         const conns = new Map(), remote = new Map(), handlers = new Set();
         let pres = {}, snap = null, queued = false, settled = false, myId = null;
-        const fail = code => { if (!settled) { settled = true; try { peer.destroy(); } catch (e) {} reject({ code }); } };
+        let beat = null, bye = null;
+        const fail = code => { if (!settled) { settled = true; clearInterval(beat); if (bye) window.removeEventListener('pagehide', bye); try { peer.destroy(); } catch (e) {} reject({ code }); } };
         const notify = () => {
           snap = null;
           if (queued) return; queued = true;
           requestAnimationFrame(() => { queued = false; const ps = R.peers(); handlers.forEach(h => h({ peers: ps, joined: [], left: [], updated: [] })); });
         };
-        const send = c => { try { if (c.open) c.send({ t: 'p', p: pres }); } catch (e) { /* 切れかけの接続は無視 */ } };
+        const sendTo = (c, msg) => { try { if (c.open) c.send(msg); } catch (e) { /* 切れかけの接続は無視 */ } };
+        // 画面を閉じた人に気づけるよう、2秒ごとに合図を送り、8秒届かない相手は抜けたとみなす
+        const lastSeen = new Map();
+        beat = setInterval(() => {
+          const now = Date.now();
+          for (const [id, c] of conns) {
+            sendTo(c, { t: 'hb' });
+            if (now - (lastSeen.get(id) || now) > 8000) { try { c.close(); } catch (e) {} c.emit && c.emit('close'); }
+          }
+        }, 2000);
+        bye = () => { try { peer.destroy(); } catch (e) {} };
+        window.addEventListener('pagehide', bye);
         const attach = c => {
-          c.on('open', () => { conns.set(c.peer, c); send(c); notify(); if (role === 'guest' && !settled) { settled = true; resolve(R); } });
-          c.on('data', d => {
-            if (!d || d.t !== 'p' || typeof d.p !== 'object' || d.p === null || Array.isArray(d.p)) return;
-            if (JSON.stringify(d.p).length > 8192) return;
-            remote.set(c.peer, Object.freeze({ ...d.p })); notify();
+          c.on('open', () => {
+            conns.set(c.peer, c); lastSeen.set(c.peer, Date.now());
+            if (role === 'host') {
+              // 新しいゲストに、ホストとほかのゲストの今の状態を渡す
+              sendTo(c, { t: 'p', from: myId, p: pres });
+              for (const [id, p] of remote) if (id !== c.peer) sendTo(c, { t: 'p', from: id, p });
+            } else {
+              sendTo(c, { t: 'p', p: pres });
+              if (!settled) { settled = true; resolve(R); }
+            }
+            notify();
           });
-          const drop = () => { conns.delete(c.peer); remote.delete(c.peer); notify(); };
+          c.on('data', d => {
+            lastSeen.set(c.peer, Date.now());
+            if (!d || typeof d !== 'object' || d.t === 'hb') return;
+            if (role === 'host') {
+              // ゲストの名乗りは使わず、接続の相手をそのまま差出人とする
+              if (d.t !== 'p' || !okPres(d.p)) return;
+              const p = Object.freeze({ ...d.p });
+              remote.set(c.peer, p);
+              for (const [id, o] of conns) if (id !== c.peer) sendTo(o, { t: 'p', from: c.peer, p });
+              notify();
+            } else {
+              if (typeof d.from !== 'string' || d.from === myId) return;
+              if (d.t === 'p' && okPres(d.p)) { remote.set(d.from, Object.freeze({ ...d.p })); notify(); }
+              if (d.t === 'bye') { remote.delete(d.from); notify(); }
+            }
+          });
+          const drop = () => {
+            if (!conns.has(c.peer)) return;
+            conns.delete(c.peer); lastSeen.delete(c.peer);
+            if (role === 'host') {
+              remote.delete(c.peer);
+              for (const o of conns.values()) sendTo(o, { t: 'bye', from: c.peer });
+            } else remote.clear();   // ホストが抜けたら全員と切れる
+            notify();
+          };
           c.on('close', drop); c.on('error', drop);
         };
         const R = {
@@ -1105,18 +1449,19 @@ function peerRoomAdapter() {
           presence(patch) {
             pres = { ...pres };
             for (const [k, v] of Object.entries(patch)) { if (v === null) delete pres[k]; else pres[k] = v; }
-            conns.forEach(send); notify();
+            const msg = role === 'host' ? { t: 'p', from: myId, p: pres } : { t: 'p', p: pres };
+            conns.forEach(c => sendTo(c, msg)); notify();
             return Promise.resolve();
           },
           peers() {
             if (snap) return snap;
             return (snap = Object.freeze([
               { peer: myId, sameTab: true, isMe: true, kind: 'viewer', by: null, guest: false, presence: pres, updatedAt: Date.now() },
-              ...[...conns.keys()].map(id => ({ peer: id, sameTab: false, isMe: false, kind: 'viewer', by: null, guest: false, presence: remote.get(id) || {}, updatedAt: Date.now() })),
+              ...[...remote.keys()].map(id => ({ peer: id, sameTab: false, isMe: false, kind: 'viewer', by: null, guest: false, presence: remote.get(id) || {}, updatedAt: Date.now() })),
             ]));
           },
           onPeers(h) { handlers.add(h); notify(); return () => handlers.delete(h); },
-          leave() { try { peer.destroy(); } catch (e) {} return Promise.resolve(); },
+          leave() { clearInterval(beat); window.removeEventListener('pagehide', bye); bye(); return Promise.resolve(); },
         };
         peer.on('open', id => {
           myId = id; snap = null;
@@ -1125,7 +1470,7 @@ function peerRoomAdapter() {
         });
         // 合図用サーバーとの接続が切れても、新しい参加者を受け付けられるようにつなぎ直す
         peer.on('disconnected', () => { try { if (!peer.destroyed) peer.reconnect(); } catch (e) {} });
-        peer.on('connection', c => { if (role === 'host') attach(c); else c.close(); });
+        peer.on('connection', c => { if (role === 'host' && conns.size < 8) attach(c); else c.close(); });
         peer.on('error', e => {
           const t = e && e.type;
           console.warn('PeerJS:', t, e && e.message);
@@ -1162,30 +1507,31 @@ async function joinRoom(code, role) {
     const c = e && e.code;
     if (c === 'taken' && role === 'host' && (ON.retry = (ON.retry || 0) + 1) < 4) return joinRoom(makeCode(), role);
     ON.retry = 0;
-    onMsg(c === 'no_room' ? 'このルーム番号の部屋が見つかりません。番号を確かめるか、相手がルームを開くのを待ってください。'
+    onMsg(c === 'no_room' ? 'このルーム番号の部屋が見つかりません。番号を確かめるか、ホストがルームを開くのを待ってください。'
       : c === 'limit_reached' ? 'いまはルームを開けません。少し待ってからもう一度試してください。'
       : c === 'unsupported' ? 'このブラウザはオンライン対戦に対応していません。'
       : 'ルームに入れませんでした。通信状態を確かめて、もう一度試してください。');
     return;
   }
   ON.retry = 0;
-  Object.assign(ON, { role, code, ready: false, m: 0, phase: 'lobby', myShot: null, opp: null, oppPeer: null,
-    oppCh: null, oppFont: null, oppG: null, oppKey: '', rec: { w: 0, l: 0 }, hitSeq: 0, seenHit: 0, hits: [], full: false,
-    joinedAt: performance.now() });
+  Object.assign(ON, { role, code, ready: false, m: 0, phase: 'lobby', players: [], gone: new Set(), myShot: null,
+    hostPeer: null, seats: [], members: [], rec: { w: 0, l: 0 }, hitSeq: 0, seenHit: 0, evSeq: 0, seenEv: 0,
+    hits: [], evs: [], skLast: new Map(), full: false });
   onMsg('');
   ON.unsubPeers = ON.R.onPeers(() => sync(), () => { onMsg('ルームとの接続が切れました。退出して入り直してください。'); });
   resetChat();
-  ON.R.presence({ v: 1, chat: [], role, ch: S.ch, font: S.font, ready: false, phase: role === 'host' ? 'lobby' : null, m: 0, opp: null, shot: null, s: null, res: null }).catch(() => {});
+  ON.R.presence({ v: 2, chat: [], role, ch: S.ch, font: S.font, skill: S.skill, ready: false,
+    phase: role === 'host' ? 'lobby' : null, m: 0, seats: [], players: [], shot: null, sk: null, s: null, res: null }).catch(() => {});
   updateRoomUI();
   // 番号違いに気づけるよう、しばらくホストが見つからなければ知らせる
-  if (role === 'guest') setTimeout(() => { if (ON.R && !ON.opp) onMsg('このルーム番号の部屋が見つかりません。番号を確かめるか、相手がルームを開くのを待ってください。'); }, 4000);
+  if (role === 'guest') setTimeout(() => { if (ON.R && !ON.hostPeer) onMsg('このルーム番号の部屋が見つかりません。番号を確かめるか、ホストがルームを開くのを待ってください。'); }, 4000);
 }
 
 async function leaveRoom() {
   const R = ON.R;
   if (!R) return;
   if (ON.unsubPeers) ON.unsubPeers();
-  ON.R = null; ON.role = null; ON.opp = null;
+  ON.R = null; ON.role = null; ON.members = []; ON.hostPeer = null;
   placeChat();
   try { await R.leave(); } catch (e) { /* すでに切れている */ }
   if (S.mode !== 'idle') backToSetup();
@@ -1200,90 +1546,145 @@ function makeCode() {
   return c;
 }
 
+// 文字の形の解析は時間がかかるので、文字と書体の組ごとに一度だけ行って覚えておく
+function glyphFor(ch, font) {
+  const key = ch + '|' + font;
+  if (ON.glyphs.has(key)) { const v = ON.glyphs.get(key); return v === 'loading' ? undefined : v; }
+  ON.glyphs.set(key, 'loading');
+  (async () => {
+    await ensureFont(fontById(font), ch);
+    const g = analyzeGlyph(ch, font);
+    ON.glyphs.set(key, g.cells >= 30 ? g : null);
+    sync();
+  })();
+  return undefined;
+}
+
+function colorForPeer(peer) {
+  const others = ON.members.filter(m => !m.me);
+  const k = others.findIndex(m => m.peer === peer);
+  return k >= 0 ? FOE_CSS[k % 3] : 'var(--muted)';
+}
+
 function sync() {
   if (!ON.R) return;
   const peers = ON.R.peers();
-  const me = peers.find(p => p.sameTab);
-  ON.me = me ? me.peer : null;
-  let opp = null;
+  const meP = peers.find(p => p.sameTab);
+  ON.me = meP ? meP.peer : null;
+  const others = peers.filter(p => !p.sameTab && p.presence && (p.presence.role === 'host' || p.presence.role === 'guest'));
+  const byPeer = new Map(others.map(p => [p.peer, p]));
+  let hostP = null;
   if (ON.role === 'host') {
-    const guests = peers.filter(p => !p.sameTab && p.presence && p.presence.role === 'guest');
-    opp = guests.find(p => p.peer === ON.oppPeer) || guests[0] || null;
-    const newPeer = opp ? opp.peer : null;
-    if (newPeer !== ON.oppPeer) {
-      const lostMid = ON.oppPeer && (ON.phase === 'launch' || ON.phase === 'battle');
-      ON.oppPeer = newPeer;
-      ON.R.presence({ opp: newPeer }).catch(() => {});
-      if (lostMid) opponentLeft();
-    }
+    // 座席：いる人はそのまま、空いた席には来た順に座らせる（ホストのほかに3人まで）
+    const guests = others.filter(p => p.presence.role === 'guest');
+    const seats = ON.seats.filter(id => guests.some(g => g.peer === id));
+    for (const g of guests) if (seats.length < MAX_PLAYERS - 1 && !seats.includes(g.peer)) seats.push(g.peer);
+    if (seats.join() !== ON.seats.join()) { ON.seats = seats; ON.R.presence({ seats }).catch(() => {}); }
   } else {
-    const host = peers.find(p => !p.sameTab && p.presence && p.presence.role === 'host') || null;
-    ON.full = !!(host && host.presence.opp && ON.me && host.presence.opp !== ON.me);
-    opp = ON.full ? null : host;
-    if (!opp && ON.opp && (S.mode === 'launch' || S.mode === 'battle')) { ON.opp = null; opponentLeft(); }
-    if (ON.full) onMsg('このルームはすでに2人で対戦しています。別の番号で遊んでください。');
-    else if (host) onMsg('');
+    hostP = others.find(p => p.presence.role === 'host') || null;
+    ON.seats = hostP && Array.isArray(hostP.presence.seats) ? hostP.presence.seats.filter(x => typeof x === 'string').slice(0, MAX_PLAYERS - 1) : [];
+    ON.full = !!(hostP && ON.me && !ON.seats.includes(ON.me) && ON.seats.length >= MAX_PLAYERS - 1);
+    if (ON.full) onMsg('このルームは満員（4人）です。別の番号で遊んでください。');
+    else if (hostP) onMsg('');
+    if (!hostP && ON.hostPeer) hostLeft();
+    ON.hostPeer = hostP ? hostP.peer : null;
   }
-  ON.opp = opp;
-  chatSync(opp);
-  const pr = opp ? opp.presence : null;
-  const ch = pr ? cleanCh(pr.ch) : null, font = pr ? cleanFont(pr.font) : null;
-  if (ch && font && ch + font !== ON.oppKey) loadOppGlyph(ch, font);
-  if (!opp) { ON.oppKey = ''; ON.oppG = null; ON.oppCh = null; }
-  if (ON.role === 'host') hostTick(); else guestTick(pr);
+  // 参加者の一覧（ホストが先頭、あとは座席順）
+  const ids = ON.role === 'host' ? [ON.me, ...ON.seats] : (hostP ? [hostP.peer, ...ON.seats] : []);
+  ON.members = ids.map(id => {
+    if (id === ON.me) return { peer: id, me: true, host: ON.role === 'host', ch: S.ch, font: S.font, skill: S.skill, ready: ON.ready, g: S.g };
+    const p = byPeer.get(id);
+    if (!p) return null;
+    const pr = p.presence, ch = cleanCh(pr.ch), font = cleanFont(pr.font);
+    return { peer: id, me: false, host: pr.role === 'host', ch, font, skill: cleanSkill(pr.skill), ready: pr.ready === true,
+      g: ch && font ? glyphFor(ch, font) : null, pres: pr };
+  }).filter(Boolean);
+  chatSync(others);
+  if (ON.role === 'host') hostTick(byPeer); else guestTick(hostP ? hostP.presence : null);
   updateRoomUI();
 }
 
-async function loadOppGlyph(ch, font) {
-  const key = ch + font;
-  ON.oppKey = key; ON.oppCh = ch; ON.oppFont = font;
-  await ensureFont(fontById(font), ch);
-  if (ON.oppKey !== key) return;
-  const g = analyzeGlyph(ch, font);
-  ON.oppG = g.cells >= 30 ? g : null;
-  updateRoomUI();
-  if (ON.role === 'host') hostTick();
-}
-
-function opponentLeft() {
-  if (S.mode === 'battle' && S.battle && !S.battle.over) {
-    const B = S.battle;
-    B.over = true; B.winIdx = S.myIdx; B.code = 'left'; B.overAt = B.t;
-    finish();
-  } else if (S.mode === 'launch') {
-    backToSetup();
-    onMsg('相手が退出しました。');
-  }
+function hostLeft() {
+  if (S.mode !== 'idle') backToSetup();
   ON.phase = 'lobby'; ON.myShot = null;
-  if (ON.role === 'host' && ON.R) ON.R.presence({ phase: 'lobby', s: null }).catch(() => {});
+  onMsg('ホストが退出しました。ルームを出て、入り直してください。');
 }
 
-// ホスト：双方の準備がそろったら試合を始め、双方のシュートがそろったら計算を始める
-function hostTick() {
+// ホスト：試合中に抜けた人のコマは、その場で退場させる
+function markGone(i) {
+  ON.gone.add(i);
+  const B = S.battle;
+  if (B && !B.remote && !B.over) {
+    const t = B.tops[i];
+    if (t && t.state === 'spin') { t.state = 'out'; t.reason = '退出'; t.y = -60; t.vx = t.vz = 0; }
+  }
+}
+
+const validShot = p => {
+  const sh = p && p.presence && p.presence.shot;
+  if (!sh || typeof sh !== 'object' || sh.m !== ON.m) return null;
+  return { p: num(sh.p, 0, 1, .5), a: typeof sh.a === 'number' ? num(sh.a, -10, 10, undefined) : undefined };
+};
+
+// ホスト：全員の準備がそろったら試合を始め、全員のシュートがそろったら計算を始める
+function hostTick(byPeer) {
   if (!ON.R || ON.role !== 'host') return;
-  const pr = ON.opp ? ON.opp.presence : null;
-  if ((ON.phase === 'lobby' || ON.phase === 'result') && S.mode === 'idle' &&
-      ON.ready && pr && pr.ready === true && ON.oppG && S.g) {
-    ON.m++; ON.phase = 'launch'; ON.ready = false; ON.myShot = null;
-    ON.R.presence({ phase: 'launch', m: ON.m, ready: false, res: null, s: null }).catch(() => {});
-    S.kind = 'online'; S.myIdx = 0;
-    toLaunch(ON.oppCh, ON.oppFont, ON.oppG);
+  byPeer = byPeer || new Map(ON.R.peers().filter(p => !p.sameTab).map(p => [p.peer, p]));
+  const guests = ON.members.filter(m => !m.me);
+  if ((ON.phase === 'lobby' || ON.phase === 'result') && S.mode === 'idle' && ON.ready && S.g &&
+      guests.length >= 1 && guests.every(m => m.ready && m.g)) {
+    ON.m++; ON.phase = 'launch'; ON.ready = false; ON.myShot = null; ON.gone = new Set(); ON.skLast = new Map(); ON.skPend = new Map();
+    ON.players = ON.members.map(m => m.peer);
+    ON.R.presence({ phase: 'launch', m: ON.m, players: ON.players, ready: false, res: null, s: null }).catch(() => {});
+    S.kind = 'online';
+    toLaunch(ON.members.map(m => ({ ch: m.ch, font: m.font, g: m.g, skill: m.skill })), 0);
     return;
   }
-  if (ON.phase === 'launch' && S.mode === 'launch' && ON.myShot != null && pr && pr.shot &&
-      pr.shot.m === ON.m && ON.oppG) {
-    const pGuest = num(pr.shot.p, 0, 1, .5);
-    const aGuest = typeof pr.shot.a === 'number' ? num(pr.shot.a, -10, 10, undefined) : undefined;
-    S.battle = newBattle(S.g, ON.oppG, ON.myShot.p, pGuest, ON.myShot.a, aGuest);
-    clearBattleMeshes();
-    S.meshes = [buildTopMesh(S.g, COLOR_ME), buildTopMesh(ON.oppG, COLOR_FOE)];
-    S.mode = 'battle'; S.preview = null; ON.phase = 'battle'; ON.hits = [];
-    $('launch').hidden = true;
-    ON.R.presence({ phase: 'battle' }).catch(() => {});
+  if (ON.phase === 'launch' || ON.phase === 'battle') {
+    for (let i = 1; i < ON.players.length; i++) if (!byPeer.has(ON.players[i]) && !ON.gone.has(i)) markGone(i);
+    if (ON.phase === 'launch' && ON.gone.size >= ON.players.length - 1) {
+      // ほかの全員が抜けたら試合をやめる
+      ON.phase = 'lobby';
+      ON.R.presence({ phase: 'lobby', s: null }).catch(() => {});
+      backToSetup();
+      onMsg('ほかの参加者が全員退出しました。');
+      return;
+    }
+  }
+  if (ON.phase === 'launch' && S.mode === 'launch' && ON.myShot) {
+    const shots = ON.players.map((id, i) => i === 0 ? ON.myShot : ON.gone.has(i) ? 'gone' : validShot(byPeer.get(id)));
+    // 20秒たってもそろわなければ、まだの人は標準の強さで打ち出す
+    const late = performance.now() - S.launchAt > 20000;
+    if (shots.every(Boolean) || late) {
+      S.battle = newBattle(S.players.map((pl, i) => {
+        const sh = shots[i];
+        return sh === 'gone' ? { g: pl.g, skill: pl.skill, p: .5, gone: true }
+          : { g: pl.g, skill: pl.skill, p: sh ? sh.p : .5, a: sh ? sh.a : undefined };
+      }));
+      ON.phase = 'battle'; ON.hits = []; ON.evs = [];
+      startBattleMeshes();
+      ON.R.presence({ phase: 'battle' }).catch(() => {});
+    }
+  }
+  if (ON.phase === 'battle' && S.battle && !S.battle.over) {
+    // ゲストのスキル使用：回数 n が増えていたら1回使う（使えるかどうかはここで判定する）
+    ON.players.forEach((id, i) => {
+      if (i === 0) return;
+      const p = byPeer.get(id), sk = p && p.presence.sk;
+      if (!sk || typeof sk !== 'object' || sk.m !== ON.m) return;
+      const n = num(sk.n, 0, 1e9, 0);
+      if (n <= (ON.skLast.get(i) || 0)) return;
+      // 届いた時点でまだ使えなければ0.6秒だけ待ち、使えるようになったら使う
+      const pend = ON.skPend.get(i);
+      if (!pend || pend.n !== n) ON.skPend.set(i, { n, at: S.battle.t });
+      const since = S.battle.t - ON.skPend.get(i).at;
+      if (useSkill(S.battle, i) || since > .6) { ON.skLast.set(i, n); ON.skPend.delete(i); }
+    });
   }
 }
 
-const packTop = t => [t.x, t.z, t.th % (Math.PI * 2), t.w, t.y, t.state === 'spin' ? 0 : t.state === 'down' ? 1 : 2, t.fall, t.w0]
+const packTop = (t, B) => [t.x, t.z, t.th % (Math.PI * 2), t.w, t.y, t.state === 'spin' ? 0 : t.state === 'down' ? 1 : 2, t.fall, t.w0,
+  Math.max(0, t.cdUntil - B.t), Math.min(99, t.uses), t.guard > 0 ? 1 : 0, t.reason === '退出' ? 1 : 0]
   .map(v => Math.round(v * 1000) / 1000);
 
 // ホスト：毎秒約30回、盤面の状態を送る
@@ -1291,8 +1692,8 @@ function hostSend(now) {
   if (now - ON.sentAt < 33) return;
   ON.sentAt = now;
   const B = S.battle;
-  const s = { m: ON.m, t: Math.round(B.t * 100) / 100, a: packTop(B.tops[0]), b: packTop(B.tops[1]), h: ON.hits.slice(-6) };
-  if (B.over) s.o = [B.winner === 'you' ? 0 : 1, reasonCode(B.reason), Math.round(B.overAt * 10) / 10];
+  const s = { m: ON.m, t: Math.round(B.t * 100) / 100, T: B.tops.map(t => packTop(t, B)), h: ON.hits.slice(-6), e: ON.evs.slice(-6) };
+  if (B.over) s.o = [B.winIdx, B.code, Math.round(B.overAt * 10) / 10, B.order];
   ON.R.presence({ s }).catch(() => {});
 }
 
@@ -1300,19 +1701,26 @@ function hostSend(now) {
 function guestTick(hp) {
   if (!hp || !ON.R) return;
   const m = Math.floor(num(hp.m, 0, 1e6, 0));
-  if (hp.phase === 'launch' && m > ON.m && S.mode === 'idle' && ON.oppG && S.g) {
-    ON.m = m; ON.ready = false; ON.myShot = null; ON.seenHit = 0;
+  if (hp.phase === 'launch' && m > ON.m && S.mode === 'idle' && S.g) {
+    const ids = Array.isArray(hp.players) ? hp.players.filter(x => typeof x === 'string').slice(0, MAX_PLAYERS) : [];
+    const myIdx = ids.indexOf(ON.me);
+    if (myIdx < 0) { ON.m = m; onMsg('試合が始まりました。次の試合から参加できます。'); return; }
+    const players = ids.map(id => {
+      if (id === ON.me) return { ch: S.ch, font: S.font, g: S.g, skill: S.skill };
+      const mm = ON.members.find(x => x.peer === id);
+      return mm && mm.g ? { ch: mm.ch, font: mm.font, g: mm.g, skill: mm.skill } : null;
+    });
+    if (players.some(p => !p)) return;   // 文字の形を読み込み中。次の更新でもう一度試す
+    ON.m = m; ON.ready = false; ON.myShot = null; ON.seenHit = 0; ON.seenEv = 0; ON.players = ids;
     ON.R.presence({ ready: false, shot: null }).catch(() => {});
-    S.kind = 'online'; S.myIdx = 1;
-    toLaunch(ON.oppCh, ON.oppFont, ON.oppG);
+    S.kind = 'online';
+    toLaunch(players, myIdx);
   }
-  if (hp.phase === 'battle' && m === ON.m && S.mode === 'launch' && ON.myShot != null) {
-    const mk = g => ({ g, x: 0, z: 0, tx: 0, tz: 0, y: 0, th: 0, w: 40, w0: 40, state: 'spin', prec: 0, fall: 0 });
-    S.battle = { remote: true, t: 0, over: false, tops: [mk(ON.oppG), mk(S.g)] };
-    clearBattleMeshes();
-    S.meshes = [buildTopMesh(ON.oppG, COLOR_FOE), buildTopMesh(S.g, COLOR_ME)];
-    S.mode = 'battle'; S.preview = null;
-    $('launch').hidden = true;
+  if (hp.phase === 'lobby' && m === ON.m && S.mode === 'launch') { backToSetup(); onMsg('ほかの参加者が退出したため、試合を取りやめました。'); }
+  if (hp.phase === 'battle' && m === ON.m && S.mode === 'launch' && ON.myShot) {
+    S.battle = { remote: true, t: 0, over: false, tops: S.players.map(p => ({ g: p.g, x: 0, z: 0, tx: 0, tz: 0, y: 0, th: 0, w: 40, w0: 40,
+      state: 'spin', prec: 0, fall: 0, cdLeft: 1, uses: SKILLS[p.skill].uses || 99, guard: 0, reason: '' })) };
+    startBattleMeshes();
   }
   const s = hp.s;
   if (S.battle && S.battle.remote && s && typeof s === 'object' && s.m === ON.m) applySnap(s);
@@ -1321,14 +1729,17 @@ function guestTick(hp) {
 function applySnap(s) {
   const B = S.battle;
   const first = !B.got;
-  [s.a, s.b].forEach((a, i) => {
-    if (!Array.isArray(a) || a.length < 8) return;
+  if (!Array.isArray(s.T)) return;
+  s.T.slice(0, B.tops.length).forEach((a, i) => {
+    if (!Array.isArray(a) || a.length < 12) return;
     const t = B.tops[i];
     t.tx = num(a[0], -20, 20, 0); t.tz = num(a[1], -20, 20, 0);
     if (first) { t.x = t.tx; t.z = t.tz; t.th = num(a[2], -10, 10, 0); }
-    t.w = num(a[3], 0, 200, 0); t.y = num(a[4], -50, 5, 0);
+    t.w = num(a[3], 0, 200, 0); t.y = num(a[4], -80, 5, 0);
     t.state = ['spin', 'down', 'out'][num(a[5], 0, 2, 0) | 0];
     t.fall = num(a[6], 0, 1, 0); t.w0 = num(a[7], 1, 200, 40);
+    t.cdLeft = num(a[8], 0, 99, 0); t.uses = num(a[9], 0, 99, 0); t.guard = a[10] ? 1 : 0;
+    t.reason = a[11] ? '退出' : '';
   });
   B.got = true;
   B.t = num(s.t, 0, 600, B.t);
@@ -1340,15 +1751,24 @@ function applySnap(s) {
     const j = num(h[3], 0, 50, 1);
     burst(num(h[1], -20, 20, 0), .5, num(h[2], -20, 20, 0), Math.min(14, 3 + j * 2), j); clink(j);
   }
+  if (Array.isArray(s.e)) for (const e of s.e) {
+    if (!Array.isArray(e) || e.length < 3) continue;
+    const k = num(e[0], 0, 1e9, 0);
+    if (k <= ON.seenEv) continue;
+    ON.seenEv = k;
+    showSkillToast(num(e[1], 0, B.tops.length - 1, 0) | 0, SKILL_IDS[num(e[2], 0, SKILL_IDS.length - 1, 0) | 0]);
+  }
   if (Array.isArray(s.o) && !B.over) {
-    B.over = true; B.winIdx = num(s.o[0], 0, 1, 0) | 0;
+    const n = B.tops.length;
+    B.over = true; B.winIdx = num(s.o[0], 0, n - 1, 0) | 0;
     B.code = REASON[s.o[1]] ? s.o[1] : 'time'; B.overAt = num(s.o[2], 0, 600, B.t);
+    B.order = Array.isArray(s.o[3]) ? s.o[3].map(v => num(v, 0, n - 1, 0) | 0).slice(0, n) : null;
     B.overSeen = performance.now();
   }
 }
 
 function updateButtons() {
-  $('start').disabled = !S.g || !!ON.R;
+  $('start').disabled = !S.g || !!ON.R || S.cpus.length !== S.cpuN || S.cpus.some(c => !c.g);
   $('mkRoom').disabled = !ON.room || !S.g || !!ON.joining;
   $('joinRoom').disabled = !ON.room || !S.g || !!ON.joining;
   updateRoomUI();
@@ -1360,16 +1780,35 @@ function updateRoomUI() {
   $('tabCpu').disabled = inRoom;
   if (!inRoom) return;
   $('codeOut').textContent = ON.code;
-  const pr = ON.opp ? ON.opp.presence : null;
-  if (ON.opp && ON.oppCh) {
-    setGlyphEl($('oppGlyph'), ON.oppCh, ON.oppFont);
-    const state = pr && pr.ready === true ? '準備OK' : '準備中';
-    $('oppWho').textContent = `相手・${fontById(ON.oppFont).name}・${state}${ON.oppG ? '' : '（この文字は使えません）'}`;
-  } else {
-    $('oppGlyph').textContent = '？'; $('oppGlyph').style.fontFamily = '';
-    $('oppWho').textContent = ON.role === 'host' ? '相手の参加を待っています' : 'ホストを探しています';
+  const box = $('members'); box.innerHTML = '';
+  let k = 0;
+  for (const m of ON.members) {
+    const row = document.createElement('div'); row.className = 'member';
+    const g = document.createElement('div'); g.className = 'glyph';
+    if (m.ch && m.font) setGlyphEl(g, m.ch, m.font); else g.textContent = '？';
+    g.style.color = m.me ? 'var(--you)' : FOE_CSS[k++ % 3];
+    const who = document.createElement('div'); who.className = 'who';
+    const parts = [m.me ? 'あなた' : '参加者'];
+    if (m.host) parts[0] += '（ホスト）';
+    if (m.font) parts.push(fontById(m.font).name);
+    parts.push(SKILLS[m.skill].name, m.ready ? '準備OK' : '準備中');
+    who.textContent = parts.join('・') + (!m.me && m.g === null ? '（この文字は使えません）' : '');
+    row.append(g, who); box.append(row);
   }
-  $('readyBtn').disabled = !ON.opp || !ON.oppG || !S.g;
+  const free = MAX_PLAYERS - ON.members.length;
+  if (ON.members.length && free > 0) {
+    const row = document.createElement('div'); row.className = 'member empty';
+    const g = document.createElement('div'); g.className = 'glyph'; g.textContent = '＋';
+    const who = document.createElement('div'); who.className = 'who';
+    who.textContent = `空き${free}席。ルーム番号を伝えると、あと${free}人まで参加できます`;
+    row.append(g, who); box.append(row);
+  } else if (!ON.members.length) {
+    const row = document.createElement('div'); row.className = 'member empty';
+    row.textContent = 'ホストを探しています';
+    box.append(row);
+  }
+  const seated = ON.role === 'host' || (ON.me && ON.seats.includes(ON.me));
+  $('readyBtn').disabled = !S.g || !seated || ON.members.filter(m => !m.me).length === 0;
   $('readyBtn').textContent = ON.ready ? '準備OK を取り消す' : '準備OK';
   $('onRecord').textContent = `この部屋の成績 ${ON.rec.w}勝 ${ON.rec.l}敗`;
 }
@@ -1378,8 +1817,7 @@ function setReady(v) {
   if (!ON.R) return;
   ON.ready = v;
   ON.R.presence({ ready: v }).catch(() => {});
-  if (ON.role === 'host') hostTick();
-  updateRoomUI();
+  sync();
 }
 
 function selectTab(online) {
@@ -1393,12 +1831,13 @@ function selectTab(online) {
 $('charInput').addEventListener('input', e => { fitCharInput(); if (!e.isComposing) refreshGlyph(); });
 $('charInput').addEventListener('compositionend', () => refreshGlyph());
 $('charInput').addEventListener('focus', e => e.target.select());
-$('reroll').addEventListener('click', () => rerollFoe());
+$('reroll').addEventListener('click', () => rerollCpus());
 $('start').addEventListener('click', startCpu);
 $('shoot').addEventListener('click', shoot);
+$('skillBtn').addEventListener('click', pressSkill);
 $('next').addEventListener('click', async () => {
   if (S.kind === 'online') { backToSetup(); if (ON.R) setReady(true); return; }
-  await rerollFoe(); startCpu();
+  await rerollCpus(); startCpu();
 });
 $('again').addEventListener('click', startCpu);
 // 結果画面から設定に戻り、すぐ文字を打ち直せるよう入力欄を選んだ状態にする
@@ -1432,9 +1871,12 @@ function selectCode() {
   const r = document.createRange(); r.selectNodeContents($('codeOut'));
   const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
 }
+// スペースキー：発射中は強さ・角度の決定、対戦中はスキル（文字の入力中は反応しない）
 window.addEventListener('keydown', e => {
   const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
-  if (e.code === 'Space' && !typing && S.mode === 'launch' && document.activeElement !== $('shoot')) { e.preventDefault(); shoot(); }
+  if (e.code !== 'Space' || typing || e.repeat) return;
+  if (S.mode === 'launch' && document.activeElement !== $('shoot')) { e.preventDefault(); shoot(); }
+  else if (S.mode === 'battle' && document.activeElement !== $('skillBtn')) { e.preventDefault(); pressSkill(); }
 });
 
 // ───────── ループ ─────────
@@ -1453,12 +1895,13 @@ function frame(now) {
     }
     if (S.stage === 'aim') {
       S.aim = (S.aim + dt * 2.4) % (Math.PI * 2);   // 約2.6秒で1周
-      const mine = STARTS[S.myIdx];
-      placeArrow(mine[0], mine[1], S.aim);
+      const [mx, mz] = startPos(S.myIdx, S.players.length);
+      placeArrow(mx, mz, S.aim);
     }
     if (S.preview) S.preview.forEach((t, i) => { t.th += t.w * dt; if (S.meshes[i]) placeMesh(S.meshes[i], t); });
     // オンラインでは放置で相手を待たせないよう、12秒で自動的に打つ
     if (S.kind === 'online' && ON.myShot == null && now - S.launchAt > 12000) { shoot(); shoot(); }
+    if (S.kind === 'online' && ON.role === 'host' && ON.myShot) hostTick();
   }
   if ((S.mode === 'battle' || S.mode === 'result') && S.battle) {
     const B = S.battle;
@@ -1467,19 +1910,32 @@ function frame(now) {
       for (const t of B.tops) { t.x += (t.tx - t.x) * k; t.z += (t.tz - t.z) * k; t.th += t.w * dt; }
     } else {
       if (!B.over || B.t - B.overAt < 3) stepBattle(B);
+      // CPU は0.25秒ごとにスキルを使うか考える
+      if (S.kind === 'cpu' && !B.over && B.t - S.aiAt > .25) { S.aiAt = B.t; for (let i = 1; i < B.tops.length; i++) cpuSkillAI(B, i); }
       for (const h of _hits) {
         burst(h.x, .5, h.z, Math.min(14, 3 + h.j * 2), h.j); clink(h.j);
         if (S.kind === 'online') ON.hits.push([++ON.hitSeq, +h.x.toFixed(2), +h.z.toFixed(2), +h.j.toFixed(2)]);
       }
       _hits.length = 0;
+      for (const [i, id] of B.events) {
+        showSkillToast(i, id);
+        if (S.kind === 'online') ON.evs.push([++ON.evSeq, i, SKILL_IDS.indexOf(id)]);
+      }
+      B.events.length = 0;
       if (ON.hits.length > 12) ON.hits.splice(0, ON.hits.length - 12);
+      if (ON.evs.length > 12) ON.evs.splice(0, ON.evs.length - 12);
+      if (S.kind === 'online' && ON.R && ON.role === 'host' && ON.skPend.size && !B.over) hostTick();
       if (S.kind === 'online' && ON.R && ON.role === 'host' && (!B.over || B.t - B.overAt < 3.5)) hostSend(now);
     }
-    B.tops.forEach((t, i) => placeMesh(S.meshes[i], t));
-    const mine = B.tops[S.myIdx], theirs = B.tops[1 - S.myIdx];
-    $('spinYou').style.width = (clamp01(mine.w / 64) * 100) + '%';
-    $('spinFoe').style.width = (clamp01(theirs.w / 64) * 100) + '%';
+    B.tops.forEach((t, i) => { if (S.meshes[i]) placeMesh(S.meshes[i], t); });
+    B.tops.forEach((t, i) => {
+      const h = S.hud[i];
+      if (!h) return;
+      h.bar.style.width = (clamp01(t.w / 64) * 100) + '%';
+      h.side.classList.toggle('out', t.state !== 'spin');
+    });
     $('timer').textContent = Math.max(0, Math.ceil(MATCH_TIME - B.t));
+    if (S.mode === 'battle') updateSkillBtn();
     const doneLocal = !B.remote && B.over && B.t - B.overAt > 1.2;
     const doneRemote = B.remote && B.over && now - B.overSeen > 1200;
     if (S.mode === 'battle' && (doneLocal || doneRemote)) finish();
@@ -1491,9 +1947,11 @@ function frame(now) {
 
 resize();
 renderFontChips();
+renderSkills();
+renderCpuCount();
 updateRoomUI();
 initRoom();
-Promise.all([rerollFoe(), refreshGlyph()]).then(() => requestAnimationFrame(frame));
+Promise.all([rerollCpus(), refreshGlyph()]).then(() => requestAnimationFrame(frame));
 })();
 </script>
 </body>
