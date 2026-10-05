@@ -550,8 +550,8 @@ function stepTop(t, dt) {
   if (t.steer > 0) t.steer -= dt;
   if (t.boost > 0) {
     t.boost -= dt;
-    // スピンブーストが切れたら、上乗せした分の回転を戻す（ただし半分より下にはしない）
-    if (t.boost <= 0) { t.w = Math.max(t.w - t.boostAdd, t.w * .5); t.boostAdd = 0; }
+    // スピンブーストが切れたら、上乗せした分の半分だけ回転を戻す（ただし半分より下にはしない）
+    if (t.boost <= 0) { t.w = Math.max(t.w - t.boostAdd * .5, t.w * .5); t.boostAdd = 0; }
   }
   const hyper = t.hyper > 0;
   const r = Math.hypot(t.x, t.z) || 1e-6;
@@ -581,7 +581,7 @@ function stepTop(t, dt) {
   const inPocket = POCKETS.some(p0 => { const p = p0 + WALL.phase; return Math.abs(Math.atan2(Math.sin(ang - p), Math.cos(ang - p))) < POCKET_W; });
   const reach = t.g.maxR * .75;
   if (inPocket && !hyper) {   // ハイパー無敵中はポケットも壁として跳ね返る
-    if (r2 > ARENA_R + .15) {
+    if (r2 > ARENA_R + (t.passive === 'rubber' ? 1 : .15)) {   // ゴム壁は縁で粘る
       if (t.passive === 'revive' && !t.revived) {
         // パッシブ「リスポーン」：1回だけ、落ちる前と同じ回転のまま中央付近に戻る
         t.revived = true;
@@ -595,7 +595,8 @@ function stepTop(t, dt) {
     const vn = t.vx * nx + t.vz * nz;
     if (vn > 0) {
       const rubber = t.passive === 'rubber';
-      t.vx -= (rubber ? 1.9 : 1.65) * vn * nx; t.vz -= (rubber ? 1.9 : 1.65) * vn * nz;
+      t.vx -= (rubber ? 2 : 1.65) * vn * nx; t.vz -= (rubber ? 2 : 1.65) * vn * nz;
+      if (rubber) t.w = Math.min(t.w0, t.w + t.w0 * .03);   // パッシブ「ゴム壁」：壁に当たるたびに回転を3%取り戻す
       // 壁との擦れで回転を失い、横に弾かれる。壁が回っているので、その向きにも少し押される
       t.vx += -nz * (t.w * .02 + WALL_SPEED * ARENA_R * .25); t.vz += nx * (t.w * .02 + WALL_SPEED * ARENA_R * .25);
       if (!hyper && !rubber) t.w -= Math.min(t.w * .06, vn * 1.2);   // パッシブ「ゴム壁」は壁で回転を失わない
@@ -605,7 +606,7 @@ function stepTop(t, dt) {
   }
 
   // パッシブ「吸収回転」は回転の減りが1.6倍、「重装」は1.1倍
-  const drainK = t.passive === 'drain' ? 1.6 : t.passive === 'heavy' ? 1.1 : 1;
+  const drainK = t.passive === 'drain' ? 1.6 : t.passive === 'heavy' ? 1.1 : lowComeback(t) ? .7 : 1;
   t.w -= spinDecayRate(t.g, t.w) * drainK * dt;   // ハイパー無敵中も回転は自然に減っていく
   t.th += t.w * dt;
   if (t.w < OMEGA_MIN) {
@@ -664,18 +665,24 @@ function collide(a, b) {
   const kt = 1 / ma + 1 / mb + pat * pat / Ia + pbt * pbt / Ib;
   let jt = -vt / kt; jt = Math.max(-MU * j, Math.min(MU * j, jt));
   const Jx = (nx * j + tx * jt) * BOOST, Jz = (nz * j + tz * jt) * BOOST;
-  // 「ダッシュ」中のコマにぶつけられた側は、2倍強く弾かれる
+  // 「ダッシュ」中のコマにぶつけられた側は2倍強く弾かれる
   // 「ハイパー無敵」中のコマにぶつけられた側も同じく2倍（攻撃が最大）
   // パッシブ「逆境」：スタミナ3割未満のとき、ぶつけた相手を1.5倍強く弾く
   const da = hitPower(b), db = hitPower(a);
   const wa0 = a.w, wb0 = b.w;
-  a.vx += Jx / ma * da; a.vz += Jz / ma * da; b.vx -= Jx / mb * db; b.vz -= Jz / mb * db;
+  const ta = takeK(a), tb = takeK(b);
+  a.vx += Jx / ma * da * ta; a.vz += Jz / ma * da * ta; b.vx -= Jx / mb * db * tb; b.vz -= Jz / mb * db * tb;
   a.w += (pax * Jx + paz * Jz) / Ia; b.w -= (pbx * Jx + pbz * Jz) / Ib;
   // 逆回転にはならない（ぶつかって止まるだけ）
   a.w = Math.max(0, a.w); b.w = Math.max(0, b.w);
   // ハイパー無敵中は、ぶつかっても自分の回転は減らない
   if (a.hyper > 0) a.w = Math.max(a.w, wa0);
   if (b.hyper > 0) b.w = Math.max(b.w, wb0);
+  // ダッシュ中はぶつかって減る回転が半分、踏ん張り中は7割になる
+  if (a.guard > 0 && !(a.dash > 0) && a.w < wa0) a.w = wa0 - (wa0 - a.w) * .7;
+  if (b.guard > 0 && !(b.dash > 0) && b.w < wb0) b.w = wb0 - (wb0 - b.w) * .7;
+  if (a.dash > 0 && a.w < wa0) a.w = wa0 - (wa0 - a.w) * .5;
+  if (b.dash > 0 && b.w < wb0) b.w = wb0 - (wb0 - b.w) * .5;
   // パッシブ「吸収回転」：ぶつかるたびに回転を最大の6%取り戻す
   for (const t of [a, b]) if (t.passive === 'drain' && j * BOOST > .4) t.w = Math.min(t.w0 * (t.boostAdd ? 1.8 : 1), t.w + t.w0 * .06);
   _hits.push({ x: cx, z: cz, j: j * BOOST });
@@ -744,13 +751,13 @@ const reasonCode = text => text === '場外' ? 'out' : text === 'スピンアウ
 // ───────── スキル ─────────
 // 対戦前に1つ選んで装備し、対戦中に使う。cd はクールダウン（秒）、uses は1試合で使える回数
 const SKILLS = {
-  dash:   { name: 'ダッシュ',     desc: 'いちばん近い相手に突進し、1.5秒間ぶつかる力が2倍になる', cd: 5 },
-  guard:  { name: '踏ん張り',     desc: '4秒間、重さが100（最大）になり弾かれにくくなる', cd: 10 },
-  shock:  { name: '衝撃波',       desc: '近くの相手をまとめて吹き飛ばし、回転も少し奪う', cd: 9 },
-  charge: { name: '回転チャージ', desc: '回転を最大の20%ぶん取り戻す',             uses: 2 },
-  center: { name: '中央復帰',     desc: 'スタジアムの中央へ向きを変えて場外を防ぐ', uses: 3 },
-  boost:  { name: 'スピンブースト', desc: '4秒間、回転の速さを大きく上げる。切れると上乗せ分が戻る', cd: 12 },
-  steer:  { name: '操縦',         desc: '5秒間、スタジアムをタップ（クリック）した場所へ向きを変えられる', cd: 14 },
+  dash:   { name: 'ダッシュ',     desc: 'いちばん近い相手に突進し、1.5秒間ぶつかる力が2倍・受ける衝撃が6割5分になり、ぶつかって減る回転も半分になる', cd: 4 },
+  guard:  { name: '踏ん張り',     desc: '5秒間、重さが100（最大）になり弾かれにくく、ぶつかって減る回転も3割少なくなる', cd: 10 },
+  shock:  { name: '衝撃波',       desc: '近くの相手をまとめて大きく吹き飛ばし、回転も1割2分奪う', cd: 6 },
+  charge: { name: '回転チャージ', desc: '回転を最大の32%ぶん取り戻す',             uses: 2 },
+  center: { name: '中央復帰',     desc: 'スタジアムの中央へ向きを変えて場外を防ぎ、そのあと1.5秒間踏ん張る', uses: 4 },
+  boost:  { name: 'スピンブースト', desc: '5秒間、回転の速さを2倍近くまで上げる。切れると上乗せ分の半分だけ戻る', cd: 10 },
+  steer:  { name: '操縦',         desc: '6秒間、スタジアムをタップ（クリック）した場所へ向きを変えられ、受ける衝撃も8割になる', cd: 11 },
   hyper:  { name: 'ハイパー無敵', desc: '発動すると試合終了まで、重さ・攻撃・安定が最大になり、ぶつかっても回転が減らず、場外にもならない（回転は自然に減っていく）', uses: 1, after: 8 },
 };
 const SKILL_IDS = Object.keys(SKILLS);
@@ -767,14 +774,17 @@ const PASSIVES = {
   drain:   { name: '吸収回転',   desc: '回転の減りが1.6倍速くなるかわりに、ぶつかるたびに回転を取り戻す' },
   guts:    { name: '根性',       desc: '場外以外で倒れるとき、1回だけスタミナ1割で踏みとどまる' },
   heavy:   { name: '重装',       desc: '重さが1.3倍になるかわりに、最初の回転が1割少なく、減りも少し速い' },
-  rubber:  { name: 'ゴム壁',     desc: '壁に当たっても回転を失わず、強く跳ね返る' },
-  comeback:{ name: '逆境',       desc: 'スタミナが3割を切ると、ぶつけた相手を1.5倍強く弾く' },
+  rubber:  { name: 'ゴム壁',     desc: '壁に当たっても回転を失わず、強く跳ね返り、回転を少し取り戻す。ポケットに入っても落ちにくい' },
+  comeback:{ name: '逆境',       desc: 'スタミナが5割を切ると、ぶつけた相手を2倍強く弾き、受ける衝撃は3分の2、回転の減りも7割になる' },
 };
 const PASSIVE_IDS = Object.keys(PASSIVES);
 // スタミナ：倒れる回転（OMEGA_MIN）を0%、最初の回転を100%とした割合
 const stamina = t => clamp01((t.w - OMEGA_MIN) / (t.w0 - OMEGA_MIN));
 // ぶつけた相手を何倍強く弾くか（ダッシュ・ハイパー無敵・逆境）
-const hitPower = t => (t.dash > 0 || t.hyper > 0) ? 2 : (t.passive === 'comeback' && stamina(t) < .3) ? 1.5 : 1;
+const lowComeback = t => t.passive === 'comeback' && stamina(t) < .5;
+const hitPower = t => (t.dash > 0 || t.hyper > 0 || lowComeback(t)) ? 2 : 1;
+// 受ける衝撃の倍率（ダッシュ中は6割5分、操縦中は8割、逆境で弱っているときは3分の2）
+const takeK = t => (t.dash > 0 ? .65 : t.steer > 0 ? .8 : 1) * (lowComeback(t) ? .67 : 1);
 // after：試合開始から何秒たてば使えるか（指定がなければ1秒後から）
 const skillLimit = id => (SKILLS[id].cd ? `クールダウン${SKILLS[id].cd}秒` : `1試合${SKILLS[id].uses}回まで`) + (SKILLS[id].after ? `・開始${SKILLS[id].after}秒後から` : '');
 // 「踏ん張り」中の重さの倍率。もともと重さ100以上なら変わらない
@@ -794,28 +804,29 @@ function useSkill(B, i) {
       let dx, dz;
       if (tgt) { dx = tgt.x - t.x; dz = tgt.z - t.z; } else { dx = t.vx; dz = t.vz; }
       const d = Math.hypot(dx, dz) || 1;
-      t.vx = dx / d * 8; t.vz = dz / d * 8;
+      t.vx = dx / d * 9.5; t.vz = dz / d * 9.5;
       t.dash = 1.5;
       break;
     }
-    case 'guard': t.guard = 4; break;
+    case 'guard': t.guard = 5; break;
     case 'hyper': t.hyper = 1; break;   // 時間切れなし（試合終了まで続く）
-    case 'boost': t.boost = 4; t.boostAdd = t.w0 * .8; t.w += t.boostAdd; break;
-    case 'steer': t.steer = 5; break;
+    case 'boost': t.boost = 5; t.boostAdd = t.w0 * 1; t.w += t.boostAdd; break;
+    case 'steer': t.steer = 6; break;
     case 'shock':
       for (const o of others) {
         const d = dist(o);
-        if (d > 4 || d < 1e-4) continue;
-        const k = (10 * (1 - d / 4) + 4) / kOf(o);
+        if (d > 4.5 || d < 1e-4) continue;
+        const k = (13 * (1 - d / 4.5) + 6) / kOf(o);
         o.vx += (o.x - t.x) / d * k; o.vz += (o.z - t.z) / d * k;
-        o.w *= o.guard > 0 ? .97 : .92;
+        o.w *= o.guard > 0 ? .96 : .88;
       }
       t.w *= .97;   // 使うと回転を少し消費する
       break;
-    case 'charge': t.w = Math.min(t.w0, t.w + t.w0 * .2); break;
+    case 'charge': t.w = Math.min(t.w0, t.w + t.w0 * .32); break;
     case 'center': {
       const r = Math.hypot(t.x, t.z);
       if (r > .3) { t.vx = -t.x / r * 4.5; t.vz = -t.z / r * 4.5; }
+      t.guard = Math.max(t.guard, 1.5);
       break;
     }
   }
@@ -831,7 +842,7 @@ function steerTo(B, i, x, z) {
   if (!t || t.state !== 'spin' || !(t.steer > 0) || B.over) return false;
   const dx = x - t.x, dz = z - t.z, d = Math.hypot(dx, dz);
   if (d < .2) return false;
-  const sp = Math.max(4, Math.hypot(t.vx, t.vz));
+  const sp = Math.max(5, Math.hypot(t.vx, t.vz));
   t.vx = dx / d * sp; t.vz = dz / d * sp;
   return true;
 }
@@ -839,9 +850,11 @@ function steerTo(B, i, x, z) {
 function cpuSkillAI(B, i) {
   const t = B.tops[i];
   if (t.steer > 0 && t.state === 'spin') {
-    // 操縦中の CPU は、いちばん近い相手へ向かう
-    const o = B.tops.filter(o => o !== t && o.state === 'spin').sort((a, b) => Math.hypot(a.x - t.x, a.z - t.z) - Math.hypot(b.x - t.x, b.z - t.z))[0];
-    if (o) steerTo(B, i, o.x, o.z);
+    // 操縦中の CPU：縁に寄りすぎたら中央へ戻り、そうでなければいちばん弱っている相手へ向かう
+    // 縁に寄りすぎたら中央へ戻る。1対1のときだけ、中央寄りにいる相手へ向かう
+    const foes = B.tops.filter(o => o !== t && o.state === 'spin');
+    if (Math.hypot(t.x, t.z) > 3.6) steerTo(B, i, 0, 0);
+    else if (foes.length === 1 && Math.hypot(foes[0].x, foes[0].z) < 3.8) steerTo(B, i, foes[0].x, foes[0].z);
   }
   if (!skillReady(B, t)) return;
   const others = B.tops.filter(o => o !== t && o.state === 'spin');
@@ -1615,7 +1628,7 @@ const ON = {
 };
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 // 通信の取り決めの版。ページを更新して中身が変わったら上げる（版が違う人どうしは試合を始められない）
-const PROTO = 3;
+const PROTO = 4;
 
 // ほかの人から届く値はすべて信用せず、型と範囲を確かめてから使う
 const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
