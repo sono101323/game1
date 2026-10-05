@@ -395,11 +395,13 @@ function insideMask(g, lx, lz) {
   return g.mask[gy * N + gx] === 1;
 }
 
+// 性能表示で「重さ100」にあたる質量（「踏ん張り」はこの重さまで引き上げる）
+const MASS_100 = 1.9;
 // 画面表示用の0〜100の指標（物理計算は生の値を直接使う）
 const clamp01 = v => Math.max(0, Math.min(1, v));
 function ratings(g) {
   return {
-    mass: Math.round(clamp01(g.mass / 1.9) * 100),
+    mass: Math.round(clamp01(g.mass / MASS_100) * 100),
     atk: Math.round(clamp01((1 - g.round) * 1.15 + (g.maxR - .85) * .8) * 100),
     sta: Math.round(clamp01(1 - spinDecayRate(g, 45) / 2.4) * 100),
     bal: Math.round(clamp01(1 - g.ecc / .18) * 100),
@@ -521,8 +523,8 @@ function collide(a, b) {
   if (!cnt) return;
   const cx = sx / cnt, cz = sz / cnt;
   let nx = d > 1e-5 ? dx / d : 1, nz = d > 1e-5 ? dz / d : 0;
-  // 「踏ん張り」中は重さと回転の粘りが2.5倍になる
-  const ka = a.guard > 0 ? 2.5 : 1, kb = b.guard > 0 ? 2.5 : 1;
+  // 「踏ん張り」中は重さが100（MASS_100）になる。回転の粘りも同じ割合で増える
+  const ka = guardK(a), kb = guardK(b);
   const ma = a.g.mass * ka, mb = b.g.mass * kb, Ia = a.g.inertia * ka, Ib = b.g.inertia * kb;
   // めり込みを少しずつ解消
   const corr = Math.min(cnt * .0025, .06);
@@ -619,13 +621,15 @@ const reasonCode = text => text === '場外' ? 'out' : text === 'スピンアウ
 // 対戦前に1つ選んで装備し、対戦中に使う。cd はクールダウン（秒）、uses は1試合で使える回数
 const SKILLS = {
   dash:   { name: 'ダッシュ',     desc: 'いちばん近い相手に突進し、1.5秒間ぶつかる力が2倍になる', cd: 5 },
-  guard:  { name: '踏ん張り',     desc: '2秒間、重さが2.5倍になり弾かれにくくなる', cd: 15 },
+  guard:  { name: '踏ん張り',     desc: '4秒間、重さが100（最大）になり弾かれにくくなる', cd: 10 },
   shock:  { name: '衝撃波',       desc: '近くの相手をまとめて吹き飛ばし、回転も少し奪う', cd: 9 },
   charge: { name: '回転チャージ', desc: '回転を最大の20%ぶん取り戻す',             uses: 2 },
   center: { name: '中央復帰',     desc: 'スタジアムの中央へ向きを変えて場外を防ぐ', uses: 3 },
 };
 const SKILL_IDS = Object.keys(SKILLS);
 const skillLimit = id => SKILLS[id].cd ? `クールダウン${SKILLS[id].cd}秒` : `1試合${SKILLS[id].uses}回まで`;
+// 「踏ん張り」中の重さの倍率。もともと重さ100以上なら変わらない
+const guardK = t => t.guard > 0 ? Math.max(1, MASS_100 / t.g.mass) : 1;
 const skillReady = (B, t) => !B.over && t.state === 'spin' && B.t >= t.cdUntil && t.uses > 0;
 
 function useSkill(B, i) {
@@ -643,12 +647,12 @@ function useSkill(B, i) {
       t.dash = 1.5;
       break;
     }
-    case 'guard': t.guard = 2; break;
+    case 'guard': t.guard = 4; break;
     case 'shock':
       for (const o of others) {
         const d = dist(o);
         if (d > 4 || d < 1e-4) continue;
-        const k = (10 * (1 - d / 4) + 4) / (o.guard > 0 ? 2.5 : 1);
+        const k = (10 * (1 - d / 4) + 4) / guardK(o);
         o.vx += (o.x - t.x) / d * k; o.vz += (o.z - t.z) / d * k;
         o.w *= o.guard > 0 ? .97 : .92;
       }
