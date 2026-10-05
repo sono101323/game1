@@ -34,6 +34,8 @@ body {
 #arena { position: fixed; inset: 0; overflow: hidden; }
 #stage { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
 button, input { font: inherit; color: inherit; }
+/* スマホのブラウザは文字が16px未満の入力欄に触れると画面を拡大するので、入力欄は16px以上にする */
+input { font-size: max(16px, 1em); }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
 
@@ -87,7 +89,7 @@ button { cursor: pointer; }
 .pane, #onOut, #onIn { display: flex; flex-direction: column; gap: 12px; }
 .note { margin: 0; font-size: 12px; color: var(--muted); }
 .joinrow { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-#codeIn { background: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 6px 10px; letter-spacing: .3em; text-transform: uppercase; min-width: 0; }
+#codeIn { background: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 6px 10px; letter-spacing: .3em; text-transform: uppercase; min-width: 0; font-size: 16px; }
 #codeIn:focus { border-color: var(--brass); outline: none; }
 .codeline { display: flex; align-items: center; gap: 10px; }
 #codeOut { font-family: var(--font-display); font-size: 26px; letter-spacing: .2em; color: var(--brass); flex: 1; user-select: all; }
@@ -100,7 +102,7 @@ button { cursor: pointer; }
 .chatlog .opp b { color: var(--foe); }
 .chatlog .sys { color: var(--muted); font-size: 12px; }
 .chatform { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
-#chatIn { background: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; min-width: 0; font-size: 14px; }
+#chatIn { background: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; min-width: 0; font-size: 16px; }
 #chatIn:focus { border-color: var(--brass); outline: none; }
 /* 対戦中はスタジアムの左上に小さく重ねる */
 .chat.float { position: absolute; left: 16px; top: 56px; width: min(300px, calc(100% - 32px)); padding: 8px; box-sizing: border-box;
@@ -192,7 +194,7 @@ button { cursor: pointer; }
     </div>
     <div class="row">
       <button class="ghost" id="again" type="button">同じ相手と再戦</button>
-      <button class="ghost" id="change" type="button">文字を変える</button>
+      <button class="ghost" id="change" type="button">字を選びなおす</button>
     </div>
   </div>
 </div>
@@ -886,7 +888,7 @@ function finish() {
     $('resStreak').textContent = `連勝 ${S.streak}　最高 ${store.get(streakKey(), 0)}`;
     $('next').textContent = win ? '次の相手' : '新しい相手で挑む';
     $('again').hidden = false;
-    $('change').textContent = '文字を変える';
+    $('change').textContent = '字を選びなおす';
   } else {
     ON.rec[win ? 'w' : 'l']++;
     if (ON.role === 'host') {
@@ -896,7 +898,7 @@ function finish() {
     $('resStreak').textContent = `この部屋の成績 ${ON.rec.w}勝 ${ON.rec.l}敗`;
     $('next').textContent = 'もう一度';
     $('again').hidden = true;
-    $('change').textContent = 'ルームに戻る';
+    $('change').textContent = '字を選びなおす';
   }
   $('result').hidden = false;
   $('next').focus();
@@ -1332,7 +1334,14 @@ $('next').addEventListener('click', async () => {
   await rerollFoe(); startCpu();
 });
 $('again').addEventListener('click', startCpu);
-$('change').addEventListener('click', backToSetup);
+// 結果画面から設定に戻り、すぐ文字を打ち直せるよう入力欄を選んだ状態にする
+$('change').addEventListener('click', () => {
+  backToSetup();
+  const input = $('charInput');
+  input.scrollIntoView({ block: 'center' });
+  input.focus({ preventScroll: true });
+  input.select();
+});
 $('tabCpu').addEventListener('click', () => selectTab(false));
 $('tabOnline').addEventListener('click', () => selectTab(true));
 $('mkRoom').addEventListener('click', () => { initAudio(); enterRoom(makeCode(), 'host'); });
