@@ -142,6 +142,9 @@ button { cursor: pointer; }
 .chat.float { position: absolute; left: 16px; top: 56px; width: min(300px, calc(100% - 32px)); padding: 8px; box-sizing: border-box;
   background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--line); border-radius: 4px; }
 .chat.float .chatlog { max-height: 78px; }
+/* スマホの対戦中：スタジアムの下に置く */
+.chat.dock { margin: 10px 16px 16px; padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
+.chat.dock .chatlog { max-height: 84px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .go {
   border: 0; border-radius: 4px; padding: 12px; background: var(--brass); color: var(--ink);
@@ -188,6 +191,7 @@ button { cursor: pointer; }
   body { overflow-x: hidden; overflow-y: auto; }
   #arena { position: relative; inset: auto; height: clamp(300px, 52vh, 460px); }
   body.playing #arena { height: clamp(360px, 80vh, 720px); }
+  body.playing.chatdock #arena { height: clamp(340px, 66vh, 640px); }
   .hud, .launch { top: auto; }
   .hud { top: 12px; }
   .launch { bottom: 14px; }
@@ -452,7 +456,7 @@ function makeTop(g, x, z, power, side, angle, skill) {
   const sk = SKILLS[skill] ? skill : 'dash';
   return { g, side, x, z, vx, vz, th: 0, w: w0, w0,
            state: 'spin', y: 0, tilt: 0, prec: 0, fall: 0,
-           skill: sk, cdUntil: 1, uses: SKILLS[sk].uses || Infinity, guard: 0, dash: 0, hyper: 0 };
+           skill: sk, cdUntil: SKILLS[sk].after || 1, uses: SKILLS[sk].uses || Infinity, guard: 0, dash: 0, hyper: 0 };
 }
 
 function stepTop(t, dt) {
@@ -646,10 +650,13 @@ const SKILLS = {
   shock:  { name: '衝撃波',       desc: '近くの相手をまとめて吹き飛ばし、回転も少し奪う', cd: 9 },
   charge: { name: '回転チャージ', desc: '回転を最大の20%ぶん取り戻す',             uses: 2 },
   center: { name: '中央復帰',     desc: 'スタジアムの中央へ向きを変えて場外を防ぐ', uses: 3 },
-  hyper:  { name: 'ハイパー無敵', desc: '5秒間、重さ・攻撃・持久・安定がすべて最大になり、場外にもならない', uses: 1 },
+  hyper:  { name: 'ハイパー無敵', desc: '5秒間、重さ・攻撃・持久・安定がすべて最大になり、場外にもならない', uses: 1, after: 10 },
 };
 const SKILL_IDS = Object.keys(SKILLS);
-const skillLimit = id => SKILLS[id].cd ? `クールダウン${SKILLS[id].cd}秒` : `1試合${SKILLS[id].uses}回まで`;
+// 効果が続くスキルの残り時間（秒）。効果のないスキルは0
+const effectLeft = t => ({ dash: t.dash, guard: t.guard, hyper: t.hyper }[t.skill] || 0);
+// after：試合開始から何秒たてば使えるか（指定がなければ1秒後から）
+const skillLimit = id => (SKILLS[id].cd ? `クールダウン${SKILLS[id].cd}秒` : `1試合${SKILLS[id].uses}回まで`) + (SKILLS[id].after ? `・開始${SKILLS[id].after}秒後から` : '');
 // 「踏ん張り」中の重さの倍率。もともと重さ100以上なら変わらない
 const guardK = t => (t.guard > 0 || t.hyper > 0) ? Math.max(1, MASS_100 / t.g.mass) : 1;
 const skillReady = (B, t) => !B.over && t.state === 'spin' && B.t >= t.cdUntil && t.uses > 0;
@@ -1211,9 +1218,13 @@ function updateSkillBtn() {
   const id = S.players[S.myIdx].skill;
   const cdLeft = B.remote ? t.cdLeft : Math.max(0, t.cdUntil - B.t);
   const uses = B.remote ? t.uses : t.uses;
+  const eff = B.remote ? (t.effLeft || 0) : Math.max(0, effectLeft(t));
   let label = SKILLS[id].name;
-  if (SKILLS[id].uses) label += `　残り${uses}回`;
-  if (cdLeft > 0 && uses > 0) label += `　${cdLeft.toFixed(1)}秒`;
+  if (eff > 0 && t.state === 'spin') label += `　発動中　あと${eff.toFixed(1)}秒`;
+  else {
+    if (SKILLS[id].uses) label += `　残り${uses}回`;
+    if (cdLeft > 0 && uses > 0) label += `　${cdLeft.toFixed(1)}秒`;
+  }
   const off = B.over || t.state !== 'spin' || cdLeft > 0 || uses <= 0;
   if (label !== S.skillLabel) { $('skillBtn').textContent = label; S.skillLabel = label; }
   $('skillBtn').disabled = off;
@@ -1367,11 +1378,20 @@ function chatSync(others) {
   }
 }
 // 対戦中はスタジアムの上（HUD のすぐ下）へ、待機中はルームの欄へチャットを移す
+const phoneMQ = window.matchMedia('(max-width: 640px)');
 function placeChat() {
   const chat = $('chat');
-  const floating = !!ON.R && S.mode !== 'idle';
+  const playing = !!ON.R && S.mode !== 'idle';
+  // スマホでは対戦中のチャットをスタジアムの下に置き、画面に重ねない
+  const dock = playing && phoneMQ.matches;
+  const floating = playing && !dock;
   chat.classList.toggle('float', floating);
-  if (floating) {
+  chat.classList.toggle('dock', dock);
+  document.body.classList.toggle('chatdock', dock);
+  if (dock) {
+    chat.style.top = '';
+    $('arena').after(chat);
+  } else if (floating) {
     $('arena').insertBefore(chat, $('result'));
     const hud = $('hud');
     chat.style.top = hud.hidden ? '' : `${hud.offsetTop + hud.offsetHeight + 8}px`;
@@ -1381,6 +1401,7 @@ function placeChat() {
   }
   chatToBottom();
 }
+if (phoneMQ.addEventListener) phoneMQ.addEventListener('change', () => { if (ON.R) placeChat(); });
 
 // ───────── オンライン対戦 ─────────
 // 同じルーム番号を開いた最大4人をつなぐ。claude.ai の中では room 機能、外では PeerJS を使う。
@@ -1725,7 +1746,7 @@ function hostTick(byPeer) {
 }
 
 const packTop = (t, B) => [t.x, t.z, t.th % (Math.PI * 2), t.w, t.y, t.state === 'spin' ? 0 : t.state === 'down' ? 1 : 2, t.fall, t.w0,
-  Math.max(0, t.cdUntil - B.t), Math.min(99, t.uses), t.guard > 0 ? 1 : 0, t.reason === '退出' ? 1 : 0]
+  Math.max(0, t.cdUntil - B.t), Math.min(99, t.uses), t.guard > 0 ? 1 : 0, t.reason === '退出' ? 1 : 0, Math.max(0, effectLeft(t))]
   .map(v => Math.round(v * 1000) / 1000);
 
 // ホスト：毎秒約30回、盤面の状態を送る
@@ -1760,7 +1781,7 @@ function guestTick(hp) {
   if (hp.phase === 'lobby' && m === ON.m && S.mode === 'launch') { backToSetup(); onMsg('ほかの参加者が退出したため、試合を取りやめました。'); }
   if (hp.phase === 'battle' && m === ON.m && S.mode === 'launch' && ON.myShot) {
     S.battle = { remote: true, t: 0, over: false, tops: S.players.map(p => ({ g: p.g, x: 0, z: 0, tx: 0, tz: 0, y: 0, th: 0, w: 40, w0: 40,
-      state: 'spin', prec: 0, fall: 0, cdLeft: 1, uses: SKILLS[p.skill].uses || 99, guard: 0, reason: '' })) };
+      state: 'spin', prec: 0, fall: 0, cdLeft: SKILLS[p.skill].after || 1, uses: SKILLS[p.skill].uses || 99, guard: 0, reason: '' })) };
     startBattleMeshes();
   }
   const s = hp.s;
@@ -1781,6 +1802,7 @@ function applySnap(s) {
     t.fall = num(a[6], 0, 1, 0); t.w0 = num(a[7], 1, 200, 40);
     t.cdLeft = num(a[8], 0, 99, 0); t.uses = num(a[9], 0, 99, 0); t.guard = a[10] ? 1 : 0;
     t.reason = a[11] ? '退出' : '';
+    t.effLeft = num(a[12], 0, 10, 0);
   });
   B.got = true;
   B.t = num(s.t, 0, 600, B.t);
@@ -1956,7 +1978,11 @@ function frame(now) {
     const B = S.battle;
     if (B.remote) {
       const k = Math.min(1, dt * 15);
-      for (const t of B.tops) { t.x += (t.tx - t.x) * k; t.z += (t.tz - t.z) * k; t.th += t.w * dt; }
+      for (const t of B.tops) {
+        t.x += (t.tx - t.x) * k; t.z += (t.tz - t.z) * k; t.th += t.w * dt;
+        if (t.effLeft > 0) t.effLeft = Math.max(0, t.effLeft - dt);
+        if (t.cdLeft > 0) t.cdLeft = Math.max(0, t.cdLeft - dt);
+      }
     } else {
       if (!B.over || B.t - B.overAt < 3) stepBattle(B);
       // CPU は0.25秒ごとにスキルを使うか考える
