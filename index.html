@@ -74,6 +74,17 @@ button { cursor: pointer; }
 .foe .who { flex: 1; min-width: 0; font-size: 13px; }
 .ghost { background: transparent; border: 1px solid var(--line); border-radius: 3px; padding: 4px 10px; font-size: 13px; }
 
+.tabs { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.tab { background: transparent; border: 0; padding: 8px; font-size: 13px; color: var(--muted); }
+.tab[aria-selected="true"] { background: var(--ink); color: var(--brass); }
+.pane { display: flex; flex-direction: column; gap: 12px; }
+.note { margin: 0; font-size: 12px; color: var(--muted); }
+.joinrow { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+#codeIn { background: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 6px 10px; letter-spacing: .3em; text-transform: uppercase; min-width: 0; }
+#codeIn:focus { border-color: var(--brass); outline: none; }
+.codeline { display: flex; align-items: center; gap: 10px; }
+#codeOut { font-family: var(--font-display); font-size: 26px; letter-spacing: .2em; color: var(--brass); flex: 1; user-select: all; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .go {
   border: 0; border-radius: 4px; padding: 12px; background: var(--brass); color: var(--ink);
   font-family: var(--font-display); font-size: 18px; letter-spacing: .1em;
@@ -143,17 +154,50 @@ button { cursor: pointer; }
     </div>
   </div>
   <div class="fonts" role="group" aria-label="書体" id="fonts"></div>
-  <div>
-    <div class="label">対戦相手</div>
+  <div class="tabs" role="tablist" aria-label="対戦の種類">
+    <button class="tab" id="tabCpu" role="tab" type="button" aria-selected="true">CPUと対戦</button>
+    <button class="tab" id="tabOnline" role="tab" type="button" aria-selected="false">オンライン</button>
+  </div>
+
+  <div class="pane" id="paneCpu">
     <div class="foe">
       <div class="glyph" id="foeGlyph">〇</div>
       <div class="who" id="foeWho">CPU・丸ゴシック</div>
       <button class="ghost" id="reroll" type="button">替える</button>
     </div>
+    <button class="go" id="start" type="button">対戦する</button>
+    <div class="streak" id="streak">連勝 0　この文字の最高 0</div>
+  </div>
+
+  <div class="pane" id="paneOnline" hidden>
+    <div id="onOut">
+      <p class="note">ルームを作って番号を相手に伝えると、同じページを開いた人と対戦できます。</p>
+      <button class="go" id="mkRoom" type="button" disabled>ルームを作る</button>
+      <div class="joinrow">
+        <label class="sr" for="codeIn">ルーム番号</label>
+        <input id="codeIn" type="text" placeholder="ルーム番号" maxlength="4" autocomplete="off" spellcheck="false" autocapitalize="characters">
+        <button class="ghost" id="joinRoom" type="button" disabled>参加</button>
+      </div>
+    </div>
+    <div id="onIn" hidden>
+      <div class="codeline">
+        <span class="label">ルーム番号</span>
+        <code id="codeOut">----</code>
+        <button class="ghost" id="copyCode" type="button">コピー</button>
+      </div>
+      <div class="foe">
+        <div class="glyph" id="oppGlyph">？</div>
+        <div class="who" id="oppWho">相手を待っています</div>
+      </div>
+      <div class="row">
+        <button class="go" id="readyBtn" type="button" disabled>準備OK</button>
+        <button class="ghost" id="leaveRoom" type="button">退出</button>
+      </div>
+      <div class="streak" id="onRecord">この部屋の成績 0勝 0敗</div>
+    </div>
+    <p class="note" id="onMsg" role="status">接続しています…</p>
   </div>
   <p class="msg" id="msg" role="status"></p>
-  <button class="go" id="start" type="button">対戦する</button>
-  <div class="streak" id="streak">連勝 0　この文字の最高 0</div>
 </section>
 
 <div class="hud" id="hud" hidden>
@@ -163,7 +207,7 @@ button { cursor: pointer; }
 </div>
 
 <div class="launch" id="launch" hidden>
-  <div class="label">ゲージが右端近くで止まるほど強く回ります</div>
+  <div class="label" id="launchMsg">ゲージが右端近くで止まるほど強く回ります</div>
   <div class="gauge"><i id="gaugeFill"></i></div>
   <button class="go" id="shoot" type="button">シュート</button>
 </div>
@@ -618,6 +662,7 @@ window.addEventListener('resize', resize);
 // ───────── 画面と進行 ─────────
 const $ = id => document.getElementById(id);
 const CPU_POOL = ['〇', '山', '鬼', '米', '田', '永', '風', '龍', '卍', '口', '十', '円', '雷', '剣', '王', '火', '水', '木', '金', '土', '門', '愛', '傘', '嵐', '轟', '鬱', '一', '乙', '凸', '凹', '回', '串', 'W', 'S', '@', '★', '巴', '輪', '鑑', '黒'];
+const COLOR_ME = 0xe9724c, COLOR_FOE = 0x4cb3e9;
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -628,17 +673,23 @@ const S = {
   ch: store.get('mg.ch', '龍'), font: store.get('mg.font', 'gothic'),
   foeCh: '〇', foeFont: 'maru',
   g: null, foeG: null, streak: 0,
+  kind: 'cpu',            // 'cpu' | 'online'
+  myIdx: 0,               // 自分のコマが battle.tops の何番目か
   mode: 'idle', battle: null, meshes: [], idle: null, idleMesh: null,
-  gauge: 0, gaugeDir: 1, lastFoe: null,
+  gauge: 0, gaugeDir: 1, launchAt: 0,
 };
 $('charInput').value = S.ch;
+
+// 勝敗理由はコードでやりとりし、表示文は各自の画面で組み立てる
+const REASON = { out: '場外', spin: 'スピンアウト', time: '時間切れ', left: '退出' };
+const reasonCode = text => text === '場外' ? 'out' : text === 'スピンアウト' ? 'spin' : 'time';
 
 function renderFontChips() {
   const box = $('fonts'); box.innerHTML = '';
   for (const f of FONTS) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'chip'; b.textContent = f.name;
-    b.style.fontFamily = f.css.replace('{S}px', '').replace(/^\d+\s+/, '').trim();
+    b.style.fontFamily = cssFamily(f.id);
     b.style.fontWeight = f.w;
     b.setAttribute('aria-pressed', String(f.id === S.font));
     b.addEventListener('click', () => { S.font = f.id; store.set('mg.font', f.id); renderFontChips(); refreshGlyph(); });
@@ -675,32 +726,35 @@ async function refreshGlyph() {
   const raw = $('charInput').value.trim();
   const ch = Array.from(raw)[0] || '';
   const token = ++glyphToken;
-  if (!ch) { $('msg').textContent = '文字を一つ入力してください。'; $('start').disabled = true; return; }
+  if (!ch) { $('msg').textContent = '文字を一つ入力してください。'; S.g = null; updateButtons(); return; }
   if (Array.from(raw).length > 1) $('charInput').value = ch;
   await ensureFont(fontById(S.font), ch);
   if (token !== glyphToken) return;
   const g = analyzeGlyph(ch, S.font);
   if (g.cells < 30) {
     $('msg').textContent = 'この文字は形がほとんどないため、コマにできません。';
-    $('start').disabled = true; return;
+    S.g = null; updateButtons(); return;
   }
-  $('msg').textContent = ''; $('start').disabled = false;
+  $('msg').textContent = '';
   if (ch !== S.ch) S.streak = 0;
   S.ch = ch; S.g = g; store.set('mg.ch', ch);
   drawPreview(g); showStats(g); showStreak();
-  $('hudYou').textContent = ch; $('hudYou').style.fontFamily = cssFamily(S.font);
   setIdle(g);
+  if (ON.R) ON.R.presence({ ch: S.ch, font: S.font }).catch(() => {});
+  updateButtons();
 }
-const cssFamily = id => fontById(id).css.replace(/^\d+\s+\{S\}px\s+/, '');
+function cssFamily(id) { return fontById(id).css.replace(/^\d+\s+\{S\}px\s+/, ''); }
+function setGlyphEl(el, ch, fontId) {
+  el.textContent = ch; el.style.fontFamily = cssFamily(fontId); el.style.fontWeight = fontById(fontId).w;
+}
 
 async function rerollFoe() {
   let ch;
   do { ch = CPU_POOL[Math.floor(Math.random() * CPU_POOL.length)]; } while (ch === S.foeCh);
   const f = FONTS[Math.floor(Math.random() * FONTS.length)].id;
   S.foeCh = ch; S.foeFont = f;
-  $('foeGlyph').textContent = ch; $('foeGlyph').style.fontFamily = cssFamily(f); $('foeGlyph').style.fontWeight = fontById(f).w;
+  setGlyphEl($('foeGlyph'), ch, f);
   $('foeWho').textContent = `CPU・${fontById(f).name}`;
-  $('hudFoe').textContent = ch; $('hudFoe').style.fontFamily = cssFamily(f);
   await ensureFont(fontById(f), ch);
   S.foeG = analyzeGlyph(ch, f);
 }
@@ -709,72 +763,393 @@ async function rerollFoe() {
 function setIdle(g) {
   if (S.mode !== 'idle') return;
   if (S.idleMesh) S.idleMesh.dispose();
-  S.idleMesh = buildTopMesh(g, 0xe9724c);
+  S.idleMesh = buildTopMesh(g, COLOR_ME);
   S.idle = { g, x: 0, z: 0, y: 0, th: 0, w: 12, w0: 12, state: 'spin', prec: 0, fall: 0 };
 }
 
 function clearBattleMeshes() { for (const m of S.meshes) m.dispose(); S.meshes = []; }
 
-function toLaunch() {
+// 発射画面へ。foe は相手の文字（CPU か、オンラインの相手）
+function toLaunch(foeCh, foeFont) {
   initAudio();
-  if (!S.g || !S.foeG) return;
   S.mode = 'launch'; resize();
   if (S.idleMesh) { S.idleMesh.dispose(); S.idleMesh = null; }
   clearBattleMeshes();
   $('setup').hidden = true; $('result').hidden = true;
-  $('launch').hidden = false; $('hud').hidden = false;
+  $('launch').hidden = false; $('hud').hidden = false; $('shoot').hidden = false;
+  $('launchMsg').textContent = 'ゲージが右端近くで止まるほど強く回ります';
+  setGlyphEl($('hudYou'), S.ch, S.font); setGlyphEl($('hudFoe'), foeCh, foeFont);
   $('timer').textContent = MATCH_TIME;
   $('spinYou').style.width = '0%'; $('spinFoe').style.width = '0%';
-  S.gauge = 0; S.gaugeDir = 1;
+  S.gauge = 0; S.gaugeDir = 1; S.launchAt = performance.now();
   $('shoot').focus();
 }
 
+function startCpu() {
+  if (!S.g || !S.foeG || ON.R) return;
+  S.kind = 'cpu'; S.myIdx = 0;
+  toLaunch(S.foeCh, S.foeFont);
+}
+
+// ゲージは88%付近が最大。行き過ぎると弱くなる
+const gaugePower = () => clamp01(1 - Math.abs(S.gauge - .88) / .88);
+
 function shoot() {
   if (S.mode !== 'launch') return;
-  // ゲージは88%付近が最大。行き過ぎると弱くなる
-  const pYou = clamp01(1 - Math.abs(S.gauge - .88) / .88);
-  const pFoe = .55 + Math.random() * .4;
-  S.battle = newBattle(S.g, S.foeG, pYou, pFoe);
-  S.meshes = [buildTopMesh(S.g, 0xe9724c), buildTopMesh(S.foeG, 0x4cb3e9)];
-  S.mode = 'battle';
-  $('launch').hidden = true;
+  const p = gaugePower();
+  if (S.kind === 'cpu') {
+    S.battle = newBattle(S.g, S.foeG, p, .55 + Math.random() * .4);
+    S.meshes = [buildTopMesh(S.g, COLOR_ME), buildTopMesh(S.foeG, COLOR_FOE)];
+    S.mode = 'battle';
+    $('launch').hidden = true;
+    return;
+  }
+  if (ON.myShot != null) return;
+  ON.myShot = p;
+  $('shoot').hidden = true;
+  $('launchMsg').textContent = '相手のシュートを待っています';
+  if (ON.role === 'host') hostTick();
+  else ON.R.presence({ shot: { m: ON.m, p } }).catch(() => {});
 }
 
 function finish() {
   const B = S.battle;
   S.mode = 'result';
-  const win = B.winner === 'you';
-  if (win) {
-    S.streak++;
-    if (S.streak > store.get(streakKey(), 0)) store.set(streakKey(), S.streak);
-  } else S.streak = 0;
+  const winIdx = B.winIdx != null ? B.winIdx : (B.winner === 'you' ? 0 : 1);
+  const code = B.code || reasonCode(B.reason);
+  const win = winIdx === S.myIdx;
+  let reason;
+  if (code === 'time') reason = '時間切れ（残り回転の割合で判定）';
+  else if (code === 'left') reason = '相手が退出しました';
+  else reason = `${win ? '相手' : 'あなた'}の${REASON[code]}（${(B.overAt || 0).toFixed(1)}秒）`;
+  $('reason').textContent = reason;
   $('verdict').textContent = win ? '勝' : '負';
   $('verdict').style.color = win ? 'var(--you)' : 'var(--foe)';
-  $('reason').textContent = `${win ? '相手' : 'あなた'}の${B.reason}（${B.overAt.toFixed(1)}秒）`;
-  $('resStreak').textContent = `連勝 ${S.streak}　最高 ${store.get(streakKey(), 0)}`;
-  $('next').textContent = win ? '次の相手' : '新しい相手で挑む';
+  if (S.kind === 'cpu') {
+    if (win) {
+      S.streak++;
+      if (S.streak > store.get(streakKey(), 0)) store.set(streakKey(), S.streak);
+    } else S.streak = 0;
+    $('resStreak').textContent = `連勝 ${S.streak}　最高 ${store.get(streakKey(), 0)}`;
+    $('next').textContent = win ? '次の相手' : '新しい相手で挑む';
+    $('again').hidden = false;
+    $('change').textContent = '文字を変える';
+  } else {
+    ON.rec[win ? 'w' : 'l']++;
+    if (ON.role === 'host') {
+      ON.phase = 'result';
+      ON.R.presence({ phase: 'result', res: { m: ON.m, w: winIdx, r: code, t: +(B.overAt || 0).toFixed(1) } }).catch(() => {});
+    }
+    $('resStreak').textContent = `この部屋の成績 ${ON.rec.w}勝 ${ON.rec.l}敗`;
+    $('next').textContent = 'もう一度';
+    $('again').hidden = true;
+    $('change').textContent = 'ルームに戻る';
+  }
   $('result').hidden = false;
   $('next').focus();
 }
 
 function backToSetup() {
   clearBattleMeshes();
+  S.battle = null;
   S.mode = 'idle'; resize();
   $('result').hidden = true; $('hud').hidden = true; $('launch').hidden = true; $('setup').hidden = false;
   showStreak();
   if (S.g) setIdle(S.g);
+  updateRoomUI();
+}
+
+// ───────── オンライン対戦 ─────────
+// claude.ai の room 機能で、同じルーム番号を開いた2人をつなぐ。
+// ルームを作った側（ホスト）が物理計算を行い、結果の状態を presence で流す。
+// 参加した側（ゲスト）はその状態を受け取って描画するだけ。
+// presence は閲覧のみの共有相手でも送れるため、イベント送信の権限設定は不要。
+const ON = {
+  room: null, R: null, role: null, code: '', me: null,
+  opp: null, oppPeer: null, oppCh: null, oppFont: null, oppG: null, oppKey: '',
+  ready: false, m: 0, phase: 'lobby', myShot: null,
+  rec: { w: 0, l: 0 }, sentAt: 0, hitSeq: 0, seenHit: 0, hits: [], full: false, joinedAt: 0,
+};
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+// 相手から届く値はすべて信用せず、型と範囲を確かめてから使う
+const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
+function cleanCh(v) {
+  if (typeof v !== 'string') return null;
+  const c = Array.from(v)[0];
+  return c && !/[\s\p{C}]/u.test(c) ? c : null;
+}
+const cleanFont = v => FONTS.some(f => f.id === v) ? v : null;
+
+function onMsg(t) { $('onMsg').textContent = t; $('onMsg').hidden = !t; }
+
+async function initRoom() {
+  try { ON.room = (window.claude && window.claude.use) ? await window.claude.use('room') : null; }
+  catch (e) { ON.room = null; }
+  if (!ON.room) {
+    onMsg('オンライン対戦は、claude.ai にサインインしてこのページを開いたときに使えます。');
+  } else onMsg('');
+  updateButtons();
+}
+
+async function enterRoom(code, role) {
+  if (!ON.room || ON.R) return;
+  onMsg('ルームに入っています…');
+  try {
+    ON.R = await ON.room.join('mg-' + code.toLowerCase());
+  } catch (e) {
+    onMsg(e && e.code === 'limit_reached' ? 'いまはルームを開けません。少し待ってからもう一度試してください。'
+      : 'ルームに入れませんでした。通信状態を確かめて、もう一度試してください。');
+    return;
+  }
+  Object.assign(ON, { role, code, ready: false, m: 0, phase: 'lobby', myShot: null, opp: null, oppPeer: null,
+    oppCh: null, oppFont: null, oppG: null, oppKey: '', rec: { w: 0, l: 0 }, hitSeq: 0, seenHit: 0, hits: [], full: false,
+    joinedAt: performance.now() });
+  onMsg('');
+  ON.unsubPeers = ON.R.onPeers(() => sync(), () => { onMsg('ルームとの接続が切れました。退出して入り直してください。'); });
+  ON.R.presence({ v: 1, role, ch: S.ch, font: S.font, ready: false, phase: role === 'host' ? 'lobby' : null, m: 0, opp: null, shot: null, s: null, res: null }).catch(() => {});
+  updateRoomUI();
+  // 番号違いに気づけるよう、しばらくホストが見つからなければ知らせる
+  if (role === 'guest') setTimeout(() => { if (ON.R && !ON.opp) onMsg('このルーム番号の部屋が見つかりません。番号を確かめるか、相手がルームを開くのを待ってください。'); }, 4000);
+}
+
+async function leaveRoom() {
+  const R = ON.R;
+  if (!R) return;
+  if (ON.unsubPeers) ON.unsubPeers();
+  ON.R = null; ON.role = null; ON.opp = null;
+  try { await R.leave(); } catch (e) { /* すでに切れている */ }
+  if (S.mode !== 'idle') backToSetup();
+  onMsg('');
+  updateRoomUI();
+}
+
+function makeCode() {
+  let c = '';
+  const a = new Uint32Array(4); crypto.getRandomValues(a);
+  for (const v of a) c += CODE_CHARS[v % CODE_CHARS.length];
+  return c;
+}
+
+function sync() {
+  if (!ON.R) return;
+  const peers = ON.R.peers();
+  const me = peers.find(p => p.sameTab);
+  ON.me = me ? me.peer : null;
+  let opp = null;
+  if (ON.role === 'host') {
+    const guests = peers.filter(p => !p.sameTab && p.presence && p.presence.role === 'guest');
+    opp = guests.find(p => p.peer === ON.oppPeer) || guests[0] || null;
+    const newPeer = opp ? opp.peer : null;
+    if (newPeer !== ON.oppPeer) {
+      const lostMid = ON.oppPeer && (ON.phase === 'launch' || ON.phase === 'battle');
+      ON.oppPeer = newPeer;
+      ON.R.presence({ opp: newPeer }).catch(() => {});
+      if (lostMid) opponentLeft();
+    }
+  } else {
+    const host = peers.find(p => !p.sameTab && p.presence && p.presence.role === 'host') || null;
+    ON.full = !!(host && host.presence.opp && ON.me && host.presence.opp !== ON.me);
+    opp = ON.full ? null : host;
+    if (!opp && ON.opp && (S.mode === 'launch' || S.mode === 'battle')) { ON.opp = null; opponentLeft(); }
+    if (ON.full) onMsg('このルームはすでに2人で対戦しています。別の番号で遊んでください。');
+    else if (host) onMsg('');
+  }
+  ON.opp = opp;
+  const pr = opp ? opp.presence : null;
+  const ch = pr ? cleanCh(pr.ch) : null, font = pr ? cleanFont(pr.font) : null;
+  if (ch && font && ch + font !== ON.oppKey) loadOppGlyph(ch, font);
+  if (!opp) { ON.oppKey = ''; ON.oppG = null; ON.oppCh = null; }
+  if (ON.role === 'host') hostTick(); else guestTick(pr);
+  updateRoomUI();
+}
+
+async function loadOppGlyph(ch, font) {
+  const key = ch + font;
+  ON.oppKey = key; ON.oppCh = ch; ON.oppFont = font;
+  await ensureFont(fontById(font), ch);
+  if (ON.oppKey !== key) return;
+  const g = analyzeGlyph(ch, font);
+  ON.oppG = g.cells >= 30 ? g : null;
+  updateRoomUI();
+  if (ON.role === 'host') hostTick();
+}
+
+function opponentLeft() {
+  if (S.mode === 'battle' && S.battle && !S.battle.over) {
+    const B = S.battle;
+    B.over = true; B.winIdx = S.myIdx; B.code = 'left'; B.overAt = B.t;
+    finish();
+  } else if (S.mode === 'launch') {
+    backToSetup();
+    onMsg('相手が退出しました。');
+  }
+  ON.phase = 'lobby'; ON.myShot = null;
+  if (ON.role === 'host' && ON.R) ON.R.presence({ phase: 'lobby', s: null }).catch(() => {});
+}
+
+// ホスト：双方の準備がそろったら試合を始め、双方のシュートがそろったら計算を始める
+function hostTick() {
+  if (!ON.R || ON.role !== 'host') return;
+  const pr = ON.opp ? ON.opp.presence : null;
+  if ((ON.phase === 'lobby' || ON.phase === 'result') && S.mode === 'idle' &&
+      ON.ready && pr && pr.ready === true && ON.oppG && S.g) {
+    ON.m++; ON.phase = 'launch'; ON.ready = false; ON.myShot = null;
+    ON.R.presence({ phase: 'launch', m: ON.m, ready: false, res: null, s: null }).catch(() => {});
+    S.kind = 'online'; S.myIdx = 0;
+    toLaunch(ON.oppCh, ON.oppFont);
+    return;
+  }
+  if (ON.phase === 'launch' && S.mode === 'launch' && ON.myShot != null && pr && pr.shot &&
+      pr.shot.m === ON.m && ON.oppG) {
+    const pGuest = num(pr.shot.p, 0, 1, .5);
+    S.battle = newBattle(S.g, ON.oppG, ON.myShot, pGuest);
+    S.meshes = [buildTopMesh(S.g, COLOR_ME), buildTopMesh(ON.oppG, COLOR_FOE)];
+    S.mode = 'battle'; ON.phase = 'battle'; ON.hits = [];
+    $('launch').hidden = true;
+    ON.R.presence({ phase: 'battle' }).catch(() => {});
+  }
+}
+
+const packTop = t => [t.x, t.z, t.th % (Math.PI * 2), t.w, t.y, t.state === 'spin' ? 0 : t.state === 'down' ? 1 : 2, t.fall, t.w0]
+  .map(v => Math.round(v * 1000) / 1000);
+
+// ホスト：毎秒約30回、盤面の状態を送る
+function hostSend(now) {
+  if (now - ON.sentAt < 33) return;
+  ON.sentAt = now;
+  const B = S.battle;
+  const s = { m: ON.m, t: Math.round(B.t * 100) / 100, a: packTop(B.tops[0]), b: packTop(B.tops[1]), h: ON.hits.slice(-6) };
+  if (B.over) s.o = [B.winner === 'you' ? 0 : 1, reasonCode(B.reason), Math.round(B.overAt * 10) / 10];
+  ON.R.presence({ s }).catch(() => {});
+}
+
+// ゲスト：ホストの進行に合わせて画面を切り替え、届いた状態を描画に反映する
+function guestTick(hp) {
+  if (!hp || !ON.R) return;
+  const m = Math.floor(num(hp.m, 0, 1e6, 0));
+  if (hp.phase === 'launch' && m > ON.m && S.mode === 'idle' && ON.oppG && S.g) {
+    ON.m = m; ON.ready = false; ON.myShot = null; ON.seenHit = 0;
+    ON.R.presence({ ready: false, shot: null }).catch(() => {});
+    S.kind = 'online'; S.myIdx = 1;
+    toLaunch(ON.oppCh, ON.oppFont);
+  }
+  if (hp.phase === 'battle' && m === ON.m && S.mode === 'launch' && ON.myShot != null) {
+    const mk = g => ({ g, x: 0, z: 0, tx: 0, tz: 0, y: 0, th: 0, w: 40, w0: 40, state: 'spin', prec: 0, fall: 0 });
+    S.battle = { remote: true, t: 0, over: false, tops: [mk(ON.oppG), mk(S.g)] };
+    S.meshes = [buildTopMesh(ON.oppG, COLOR_FOE), buildTopMesh(S.g, COLOR_ME)];
+    S.mode = 'battle';
+    $('launch').hidden = true;
+  }
+  const s = hp.s;
+  if (S.battle && S.battle.remote && s && typeof s === 'object' && s.m === ON.m) applySnap(s);
+}
+
+function applySnap(s) {
+  const B = S.battle;
+  const first = !B.got;
+  [s.a, s.b].forEach((a, i) => {
+    if (!Array.isArray(a) || a.length < 8) return;
+    const t = B.tops[i];
+    t.tx = num(a[0], -20, 20, 0); t.tz = num(a[1], -20, 20, 0);
+    if (first) { t.x = t.tx; t.z = t.tz; t.th = num(a[2], -10, 10, 0); }
+    t.w = num(a[3], 0, 200, 0); t.y = num(a[4], -50, 5, 0);
+    t.state = ['spin', 'down', 'out'][num(a[5], 0, 2, 0) | 0];
+    t.fall = num(a[6], 0, 1, 0); t.w0 = num(a[7], 1, 200, 40);
+  });
+  B.got = true;
+  B.t = num(s.t, 0, 600, B.t);
+  if (Array.isArray(s.h)) for (const h of s.h) {
+    if (!Array.isArray(h) || h.length < 4) continue;
+    const k = num(h[0], 0, 1e9, 0);
+    if (k <= ON.seenHit) continue;
+    ON.seenHit = k;
+    const j = num(h[3], 0, 50, 1);
+    burst(num(h[1], -20, 20, 0), .5, num(h[2], -20, 20, 0), Math.min(14, 3 + j * 2), j); clink(j);
+  }
+  if (Array.isArray(s.o) && !B.over) {
+    B.over = true; B.winIdx = num(s.o[0], 0, 1, 0) | 0;
+    B.code = REASON[s.o[1]] ? s.o[1] : 'time'; B.overAt = num(s.o[2], 0, 600, B.t);
+    B.overSeen = performance.now();
+  }
+}
+
+function updateButtons() {
+  $('start').disabled = !S.g || !!ON.R;
+  $('mkRoom').disabled = !ON.room || !S.g;
+  $('joinRoom').disabled = !ON.room || !S.g;
+  updateRoomUI();
+}
+
+function updateRoomUI() {
+  const inRoom = !!ON.R;
+  $('onOut').hidden = inRoom; $('onIn').hidden = !inRoom;
+  $('tabCpu').disabled = inRoom;
+  if (!inRoom) return;
+  $('codeOut').textContent = ON.code;
+  const pr = ON.opp ? ON.opp.presence : null;
+  if (ON.opp && ON.oppCh) {
+    setGlyphEl($('oppGlyph'), ON.oppCh, ON.oppFont);
+    const state = pr && pr.ready === true ? '準備OK' : '準備中';
+    $('oppWho').textContent = `相手・${fontById(ON.oppFont).name}・${state}${ON.oppG ? '' : '（この文字は使えません）'}`;
+  } else {
+    $('oppGlyph').textContent = '？'; $('oppGlyph').style.fontFamily = '';
+    $('oppWho').textContent = ON.role === 'host' ? '相手の参加を待っています' : 'ホストを探しています';
+  }
+  $('readyBtn').disabled = !ON.opp || !ON.oppG || !S.g;
+  $('readyBtn').textContent = ON.ready ? '準備OK を取り消す' : '準備OK';
+  $('onRecord').textContent = `この部屋の成績 ${ON.rec.w}勝 ${ON.rec.l}敗`;
+}
+
+function setReady(v) {
+  if (!ON.R) return;
+  ON.ready = v;
+  ON.R.presence({ ready: v }).catch(() => {});
+  if (ON.role === 'host') hostTick();
+  updateRoomUI();
+}
+
+function selectTab(online) {
+  $('tabCpu').setAttribute('aria-selected', String(!online));
+  $('tabOnline').setAttribute('aria-selected', String(online));
+  $('paneCpu').hidden = online; $('paneOnline').hidden = !online;
 }
 
 $('charInput').addEventListener('input', () => refreshGlyph());
 $('charInput').addEventListener('focus', e => e.target.select());
 $('reroll').addEventListener('click', () => rerollFoe());
-$('start').addEventListener('click', toLaunch);
+$('start').addEventListener('click', startCpu);
 $('shoot').addEventListener('click', shoot);
-$('next').addEventListener('click', async () => { await rerollFoe(); toLaunch(); });
-$('again').addEventListener('click', toLaunch);
+$('next').addEventListener('click', async () => {
+  if (S.kind === 'online') { backToSetup(); if (ON.R) setReady(true); return; }
+  await rerollFoe(); startCpu();
+});
+$('again').addEventListener('click', startCpu);
 $('change').addEventListener('click', backToSetup);
+$('tabCpu').addEventListener('click', () => selectTab(false));
+$('tabOnline').addEventListener('click', () => selectTab(true));
+$('mkRoom').addEventListener('click', () => { initAudio(); enterRoom(makeCode(), 'host'); });
+$('joinRoom').addEventListener('click', () => {
+  initAudio();
+  const code = $('codeIn').value.trim().toUpperCase();
+  if (!/^[A-Z0-9]{4}$/.test(code)) { onMsg('ルーム番号は英数字4文字です。'); return; }
+  enterRoom(code, 'guest');
+});
+$('codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') $('joinRoom').click(); });
+$('leaveRoom').addEventListener('click', leaveRoom);
+$('readyBtn').addEventListener('click', () => setReady(!ON.ready));
+$('copyCode').addEventListener('click', () => {
+  const done = () => { $('copyCode').textContent = 'コピー済み'; setTimeout(() => { $('copyCode').textContent = 'コピー'; }, 1500); };
+  try {
+    navigator.clipboard.writeText(ON.code).then(done, () => selectCode());
+  } catch (e) { selectCode(); }
+});
+function selectCode() {
+  const r = document.createRange(); r.selectNodeContents($('codeOut'));
+  const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+}
 window.addEventListener('keydown', e => {
-  if (e.code === 'Space' && S.mode === 'launch') { e.preventDefault(); shoot(); }
+  if (e.code === 'Space' && S.mode === 'launch' && document.activeElement !== $('shoot')) { e.preventDefault(); shoot(); }
 });
 
 // ───────── ループ ─────────
@@ -789,18 +1164,32 @@ function frame(now) {
     if (S.gauge > 1) { S.gauge = 1; S.gaugeDir = -1; }
     if (S.gauge < 0) { S.gauge = 0; S.gaugeDir = 1; }
     $('gaugeFill').style.width = (S.gauge * 100) + '%';
+    // オンラインでは放置で相手を待たせないよう、12秒で自動的に打つ
+    if (S.kind === 'online' && ON.myShot == null && now - S.launchAt > 12000) shoot();
   }
   if ((S.mode === 'battle' || S.mode === 'result') && S.battle) {
     const B = S.battle;
-    if (!B.over || B.t - B.overAt < 3) stepBattle(B);
-    for (const h of _hits) { burst(h.x, .5, h.z, Math.min(14, 3 + h.j * 2), h.j); clink(h.j); }
-    _hits.length = 0;
+    if (B.remote) {
+      const k = Math.min(1, dt * 15);
+      for (const t of B.tops) { t.x += (t.tx - t.x) * k; t.z += (t.tz - t.z) * k; t.th += t.w * dt; }
+    } else {
+      if (!B.over || B.t - B.overAt < 3) stepBattle(B);
+      for (const h of _hits) {
+        burst(h.x, .5, h.z, Math.min(14, 3 + h.j * 2), h.j); clink(h.j);
+        if (S.kind === 'online') ON.hits.push([++ON.hitSeq, +h.x.toFixed(2), +h.z.toFixed(2), +h.j.toFixed(2)]);
+      }
+      _hits.length = 0;
+      if (ON.hits.length > 12) ON.hits.splice(0, ON.hits.length - 12);
+      if (S.kind === 'online' && ON.R && ON.role === 'host' && (!B.over || B.t - B.overAt < 3.5)) hostSend(now);
+    }
     B.tops.forEach((t, i) => placeMesh(S.meshes[i], t));
-    const [y, f] = B.tops;
-    $('spinYou').style.width = (clamp01(y.w / 64) * 100) + '%';
-    $('spinFoe').style.width = (clamp01(f.w / 64) * 100) + '%';
+    const mine = B.tops[S.myIdx], theirs = B.tops[1 - S.myIdx];
+    $('spinYou').style.width = (clamp01(mine.w / 64) * 100) + '%';
+    $('spinFoe').style.width = (clamp01(theirs.w / 64) * 100) + '%';
     $('timer').textContent = Math.max(0, Math.ceil(MATCH_TIME - B.t));
-    if (S.mode === 'battle' && B.over && B.t - B.overAt > 1.2) finish();
+    const doneLocal = !B.remote && B.over && B.t - B.overAt > 1.2;
+    const doneRemote = B.remote && B.over && now - B.overSeen > 1200;
+    if (S.mode === 'battle' && (doneLocal || doneRemote)) finish();
   }
   stepSparks(dt);
   if (renderer) renderer.render(scene, camera);
@@ -809,6 +1198,8 @@ function frame(now) {
 
 resize();
 renderFontChips();
+updateRoomUI();
+initRoom();
 Promise.all([rerollFoe(), refreshGlyph()]).then(() => requestAnimationFrame(frame));
 })();
 </script>
