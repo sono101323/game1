@@ -50,6 +50,16 @@ button { cursor: pointer; }
   padding: 18px; display: flex; flex-direction: column; gap: 16px;
   backdrop-filter: blur(6px);
 }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+/* PC：設定を左右2列に分け、右列に「CPUと対戦／オンライン」を置いて画面内に収める */
+@media (min-width: 900px) {
+  .sheet { width: min(740px, calc(100% - 32px)); flex-direction: row; align-items: flex-start; gap: 28px; }
+  .sheet > .col { flex: 1 1 0; }
+}
+/* 横幅に余裕があれば、待機中のスタジアムを設定の右側に寄せる */
+@media (min-width: 1100px) {
+  body:not(.playing) #arena { left: 772px; }
+}
 .brand { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .brand h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 24px; letter-spacing: .04em; }
 .brand small { color: var(--muted); font-size: 12px; }
@@ -229,6 +239,7 @@ button { cursor: pointer; }
 </div>
 
 <section class="sheet" id="setup" aria-label="コマの設定">
+  <div class="col">
   <div class="brand"><h1>文字ゴマ道場</h1><small>一文字で回せ</small></div>
   <div class="pick">
     <div class="charbox">
@@ -251,6 +262,9 @@ button { cursor: pointer; }
     <div class="fonts" id="skills" role="group" aria-label="スキル"></div>
     <p class="note" id="skillDesc"></p>
   </div>
+  <p class="msg" id="msg" role="status"></p>
+  </div>
+  <div class="col">
   <div class="tabs" role="tablist" aria-label="対戦の種類">
     <button class="tab" id="tabCpu" role="tab" type="button" aria-selected="true">CPUと対戦</button>
     <button class="tab" id="tabOnline" role="tab" type="button" aria-selected="false">オンライン</button>
@@ -306,7 +320,7 @@ button { cursor: pointer; }
     </div>
     <p class="note" id="onMsg" role="status">接続しています…</p>
   </div>
-  <p class="msg" id="msg" role="status"></p>
+  </div>
 </section>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -438,7 +452,7 @@ function makeTop(g, x, z, power, side, angle, skill) {
   const sk = SKILLS[skill] ? skill : 'dash';
   return { g, side, x, z, vx, vz, th: 0, w: w0, w0,
            state: 'spin', y: 0, tilt: 0, prec: 0, fall: 0,
-           skill: sk, cdUntil: 1, uses: SKILLS[sk].uses || Infinity, guard: 0, dash: 0 };
+           skill: sk, cdUntil: 1, uses: SKILLS[sk].uses || Infinity, guard: 0, dash: 0, hyper: 0 };
 }
 
 function stepTop(t, dt) {
@@ -456,6 +470,8 @@ function stepTop(t, dt) {
   }
   if (t.guard > 0) t.guard -= dt;
   if (t.dash > 0) t.dash -= dt;
+  if (t.hyper > 0) t.hyper -= dt;
+  const hyper = t.hyper > 0;
   const r = Math.hypot(t.x, t.z) || 1e-6;
   const sr = clamp01(t.w / t.w0);
   // すり鉢の傾斜で中心へ
@@ -468,7 +484,7 @@ function stepTop(t, dt) {
   // 遅くなりすぎないよう、回転が床を蹴って進む力
   if (vs < 2.2 * sr) { ax += t.vx / vs * 1.5 * sr; az += t.vz / vs * 1.5 * sr; }
   // 回転が弱るとふらつく
-  const wob = (1 - sr) * (1.5 + 6 * t.g.ecc);
+  const wob = hyper ? 0 : (1 - sr) * (1.5 + 6 * t.g.ecc);   // ハイパー無敵中はふらつかない（安定が最大）
   ax += Math.cos(t.th * .5) * wob; az += Math.sin(t.th * .5) * wob;
   t.vx += ax * dt; t.vz += az * dt;
   const damp = Math.exp(-0.6 * dt);
@@ -482,7 +498,7 @@ function stepTop(t, dt) {
   const ang = Math.atan2(t.z, t.x);
   const inPocket = POCKETS.some(p => Math.abs(Math.atan2(Math.sin(ang - p), Math.cos(ang - p))) < POCKET_W);
   const reach = t.g.maxR * .75;
-  if (inPocket) {
+  if (inPocket && !hyper) {   // ハイパー無敵中はポケットも壁として跳ね返る
     if (r2 > ARENA_R + .15) { t.state = 'out'; t.vy = 1; t.reason = '場外'; }
   } else if (r2 + reach > ARENA_R) {
     const nx = t.x / r2, nz = t.z / r2;
@@ -491,13 +507,13 @@ function stepTop(t, dt) {
       t.vx -= 1.65 * vn * nx; t.vz -= 1.65 * vn * nz;
       // 壁との擦れで回転を失い、横に弾かれる
       t.vx += -nz * t.w * .02; t.vz += nx * t.w * .02;
-      t.w -= Math.min(t.w * .06, vn * 1.2);
+      if (!hyper) t.w -= Math.min(t.w * .06, vn * 1.2);
       t.hitWall = vn;
     }
     t.x = nx * (ARENA_R - reach); t.z = nz * (ARENA_R - reach);
   }
 
-  t.w -= spinDecayRate(t.g, t.w) * dt;
+  if (!hyper) t.w -= spinDecayRate(t.g, t.w) * dt;   // ハイパー無敵中は回転が減らない（持久が最大）
   t.th += t.w * dt;
   if (t.w < OMEGA_MIN) { t.state = 'down'; t.reason = 'スピンアウト'; }
 }
@@ -551,11 +567,16 @@ function collide(a, b) {
   let jt = -vt / kt; jt = Math.max(-MU * j, Math.min(MU * j, jt));
   const Jx = (nx * j + tx * jt) * BOOST, Jz = (nz * j + tz * jt) * BOOST;
   // 「ダッシュ」中のコマにぶつけられた側は、2倍強く弾かれる
-  const da = b.dash > 0 ? 2 : 1, db = a.dash > 0 ? 2 : 1;
+  // 「ハイパー無敵」中のコマにぶつけられた側も同じく2倍（攻撃が最大）
+  const da = (b.dash > 0 || b.hyper > 0) ? 2 : 1, db = (a.dash > 0 || a.hyper > 0) ? 2 : 1;
+  const wa0 = a.w, wb0 = b.w;
   a.vx += Jx / ma * da; a.vz += Jz / ma * da; b.vx -= Jx / mb * db; b.vz -= Jz / mb * db;
   a.w += (pax * Jx + paz * Jz) / Ia; b.w -= (pbx * Jx + pbz * Jz) / Ib;
   // 逆回転にはならない（ぶつかって止まるだけ）
   a.w = Math.max(0, a.w); b.w = Math.max(0, b.w);
+  // ハイパー無敵中は、ぶつかっても自分の回転は減らない
+  if (a.hyper > 0) a.w = Math.max(a.w, wa0);
+  if (b.hyper > 0) b.w = Math.max(b.w, wb0);
   _hits.push({ x: cx, z: cz, j: j * BOOST });
 }
 
@@ -625,11 +646,12 @@ const SKILLS = {
   shock:  { name: '衝撃波',       desc: '近くの相手をまとめて吹き飛ばし、回転も少し奪う', cd: 9 },
   charge: { name: '回転チャージ', desc: '回転を最大の20%ぶん取り戻す',             uses: 2 },
   center: { name: '中央復帰',     desc: 'スタジアムの中央へ向きを変えて場外を防ぐ', uses: 3 },
+  hyper:  { name: 'ハイパー無敵', desc: '5秒間、重さ・攻撃・持久・安定がすべて最大になり、場外にもならない', uses: 1 },
 };
 const SKILL_IDS = Object.keys(SKILLS);
 const skillLimit = id => SKILLS[id].cd ? `クールダウン${SKILLS[id].cd}秒` : `1試合${SKILLS[id].uses}回まで`;
 // 「踏ん張り」中の重さの倍率。もともと重さ100以上なら変わらない
-const guardK = t => t.guard > 0 ? Math.max(1, MASS_100 / t.g.mass) : 1;
+const guardK = t => (t.guard > 0 || t.hyper > 0) ? Math.max(1, MASS_100 / t.g.mass) : 1;
 const skillReady = (B, t) => !B.over && t.state === 'spin' && B.t >= t.cdUntil && t.uses > 0;
 
 function useSkill(B, i) {
@@ -648,6 +670,7 @@ function useSkill(B, i) {
       break;
     }
     case 'guard': t.guard = 4; break;
+    case 'hyper': t.hyper = 5; break;
     case 'shock':
       for (const o of others) {
         const d = dist(o);
@@ -679,6 +702,7 @@ function cpuSkillAI(B, i) {
   const near = others.reduce((m, o) => Math.min(m, Math.hypot(o.x - t.x, o.z - t.z)), 99);
   const go = {
     dash: near < 6 && Math.random() < .3,
+    hyper: near < 2.5 || ratio(t) < .45,
     guard: near < 2.3,
     shock: near < 2.6,
     charge: ratio(t) < .4,
