@@ -101,13 +101,14 @@ button { cursor: pointer; }
 .member .who { flex: 1; min-width: 0; }
 .member.empty { color: var(--muted); font-size: 12px; }
 .member.empty .glyph { border-style: dashed; color: var(--muted); font-size: 18px; }
-.skillpick { display: flex; flex-direction: column; gap: 6px; }
+.skillpick, .shape { display: flex; flex-direction: column; gap: 6px; }
+#shapeBtns .chip { min-width: 2.4em; }
 .foes { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .foes .g { font-size: 22px; }
 .foes .side.out, .hud .side.out { opacity: .35; }
 .skillbar { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); width: min(420px, calc(100% - 32px)); display: grid; }
 #skillBtn:disabled { opacity: .45; }
-.toast { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(90px + env(safe-area-inset-bottom, 0px)); padding: 6px 14px;
+.toast { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(96px + env(safe-area-inset-bottom, 0px)); padding: 6px 14px;
   background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--line); border-radius: 4px;
   font-family: var(--font-display); font-size: 18px; white-space: nowrap; pointer-events: none; animation: toast 1.4s ease forwards; }
 @keyframes toast { 0% { opacity: 0; transform: translate(-50%, 8px); } 12% { opacity: 1; transform: translate(-50%, 0); } 75% { opacity: 1; } 100% { opacity: 0; } }
@@ -260,11 +261,29 @@ button { cursor: pointer; }
       <div class="raw" id="raw">面積 –　半径 –　偏り –</div>
     </div>
   </div>
+  <div class="shape">
+    <span class="label">形を変える（上下左右に倒す・回す）</span>
+    <div class="fonts" role="group" aria-label="文字の形" id="shapeBtns">
+      <button class="chip" type="button" data-xf="up" aria-label="上に倒す">↑</button>
+      <button class="chip" type="button" data-xf="down" aria-label="下に倒す">↓</button>
+      <button class="chip" type="button" data-xf="left" aria-label="左に倒す">←</button>
+      <button class="chip" type="button" data-xf="right" aria-label="右に倒す">→</button>
+      <button class="chip" type="button" data-xf="ccw" aria-label="左に90度回す">⟲</button>
+      <button class="chip" type="button" data-xf="cw" aria-label="右に90度回す">⟳</button>
+      <button class="chip" type="button" data-xf="reset">戻す</button>
+    </div>
+    <p class="note" id="shapeDesc">そのまま</p>
+  </div>
   <div class="fonts" role="group" aria-label="書体" id="fonts"></div>
   <div class="skillpick">
     <span class="label">スキル（1つ選んで、対戦中にボタンで使う）</span>
     <div class="fonts" id="skills" role="group" aria-label="スキル"></div>
     <p class="note" id="skillDesc"></p>
+  </div>
+  <div class="skillpick">
+    <span class="label">パッシブ（ボタン不要。条件がそろうと自動で働く）</span>
+    <div class="fonts" id="passives" role="group" aria-label="パッシブスキル"></div>
+    <p class="note" id="passiveDesc"></p>
   </div>
   <p class="msg" id="msg" role="status"></p>
   </div>
@@ -356,10 +375,36 @@ async function ensureFont(font, ch) {
 // 文字を256px角に描き、64×64の格子に落として物理量を求める。1格子 = 2/64 単位（コマ全体で直径2）。
 const TEX = 256, N = 64, CELL = 2 / N;
 
-function analyzeGlyph(ch, fontId) {
+// 文字を手前・奥・左右に倒したように見せる（遠い側が小さくなる遠近つき）。deg は倒す角度
+function tiltCanvas(src, deg, vertical) {
+  if (!deg) return src;
+  const out = document.createElement('canvas'); out.width = out.height = TEX;
+  const o = out.getContext('2d');
+  const a = deg * Math.PI / 180, squash = Math.cos(a), k = Math.sin(a) * .35;
+  const len = TEX * squash, start = (TEX - len) / 2, rows = Math.ceil(len);
+  for (let i = 0; i < rows; i++) {
+    const v = i / len;                                  // 0：上（左）端 〜 1：下（右）端
+    const sc = (1 + k * (2 * v - 1)) / (1 + Math.abs(k)); // 倒した側ほど小さく
+    const w = TEX * sc, srcPos = v * TEX, srcLen = Math.max(1, TEX / len);
+    if (vertical) o.drawImage(src, 0, srcPos, TEX, srcLen, (TEX - w) / 2, start + i, w, 1);
+    else o.drawImage(src, srcPos, 0, srcLen, TEX, start + i, (TEX - w) / 2, 1, w);
+  }
+  return out;
+}
+function turnCanvas(src, quarter) {
+  if (!quarter) return src;
+  const out = document.createElement('canvas'); out.width = out.height = TEX;
+  const o = out.getContext('2d');
+  o.translate(TEX / 2, TEX / 2); o.rotate(quarter * Math.PI / 2); o.drawImage(src, -TEX / 2, -TEX / 2);
+  return out;
+}
+const XF0 = { rx: 0, ry: 0, rz: 0 };
+const xfKey = xf => `${xf.rx},${xf.ry},${xf.rz}`;
+// xf：{ rx：上下に倒す角度, ry：左右に倒す角度, rz：90度単位の回転 }
+function analyzeGlyph(ch, fontId, xf = XF0) {
   const font = fontById(fontId);
-  const c = document.createElement('canvas'); c.width = c.height = TEX;
-  const x = c.getContext('2d');
+  const c0 = document.createElement('canvas'); c0.width = c0.height = TEX;
+  const x = c0.getContext('2d');
   const size = 210;
   x.font = font.css.replace('{S}', size);
   x.textAlign = 'left'; x.textBaseline = 'alphabetic';
@@ -370,8 +415,9 @@ function analyzeGlyph(ch, fontId) {
   const ox = TEX / 2 - (R - L) / 2, oy = TEX / 2 + (A - D) / 2;
   x.fillStyle = '#fff';
   x.fillText(ch, ox, oy);
+  const c = turnCanvas(tiltCanvas(tiltCanvas(c0, xf.rx, true), xf.ry, false), xf.rz);
 
-  const data = x.getImageData(0, 0, TEX, TEX).data;
+  const data = c.getContext('2d').getImageData(0, 0, TEX, TEX).data;
   const mask = new Uint8Array(N * N);
   const s = TEX / N;
   for (let gy = 0; gy < N; gy++) for (let gx = 0; gx < N; gx++) {
@@ -404,7 +450,7 @@ function analyzeGlyph(ch, fontId) {
     const step = Math.ceil(edge.length / 2 / 360); pts = [];
     for (let i = 0; i < edge.length; i += 2 * step) pts.push(edge[i], edge[i + 1]);
   }
-  return { ch, fontId, canvas: c, mask, cells: cnt, area, mass, inertia, maxR: Math.max(maxR, .2), round, ecc, cx, cz, pts: new Float32Array(pts) };
+  return { ch, fontId, xf, canvas: c, mask, cells: cnt, area, mass, inertia, maxR: Math.max(maxR, .2), round, ecc, cx, cz, pts: new Float32Array(pts) };
 }
 
 function insideMask(g, lx, lz) {
@@ -430,6 +476,9 @@ function ratings(g) {
 const ARENA_R = 5.5, BOWL_K = 0.045, G = 9.8;
 const POCKETS = [Math.PI / 2, Math.PI / 2 + 2.094, Math.PI / 2 + 4.189];
 const POCKET_W = 0.30;  // 場外ポケットの半角（ラジアン）
+// 壁は対戦中ゆっくり回る（ポケットの位置も一緒に動く）。phase は今の回転角
+const WALL_SPEED = 0.35;   // ラジアン／秒
+const WALL = { phase: 0 };
 const OMEGA_MIN = 7, MATCH_TIME = 60;
 const height = r => BOWL_K * r * r;
 
@@ -443,8 +492,9 @@ function spinDecayRate(g, w) {
 }
 
 // angle：打ち出す向き（ラジアン。x軸から z軸へ回る向きが正）。省略時は中心を左回りに回り込む向き
-function makeTop(g, x, z, power, side, angle, skill) {
-  const w0 = 34 + 30 * power;
+function makeTop(g, x, z, power, side, angle, skill, passive) {
+  const pv = PASSIVES[passive] ? passive : 'none';
+  const w0 = (34 + 30 * power) * (pv === 'heavy' ? .9 : 1);
   const sp = 2.5 + 3 * power;
   let vx, vz;
   if (typeof angle === 'number' && isFinite(angle)) {
@@ -456,7 +506,8 @@ function makeTop(g, x, z, power, side, angle, skill) {
   const sk = SKILLS[skill] ? skill : 'dash';
   return { g, side, x, z, vx, vz, th: 0, w: w0, w0,
            state: 'spin', y: 0, tilt: 0, prec: 0, fall: 0,
-           skill: sk, cdUntil: SKILLS[sk].after || 1, uses: SKILLS[sk].uses || Infinity, guard: 0, dash: 0, hyper: 0 };
+           skill: sk, cdUntil: SKILLS[sk].after || 1, uses: SKILLS[sk].uses || Infinity, guard: 0, dash: 0, hyper: 0,
+           steer: 0, boost: 0, boostAdd: 0, passive: pv, massK: pv === 'heavy' ? 1.3 : 1, revived: false, gutsUsed: false, evt: null };
 }
 
 function stepTop(t, dt) {
@@ -474,6 +525,12 @@ function stepTop(t, dt) {
   }
   if (t.guard > 0) t.guard -= dt;
   if (t.dash > 0) t.dash -= dt;
+  if (t.steer > 0) t.steer -= dt;
+  if (t.boost > 0) {
+    t.boost -= dt;
+    // スピンブーストが切れたら、上乗せした分の回転を戻す（ただし半分より下にはしない）
+    if (t.boost <= 0) { t.w = Math.max(t.w - t.boostAdd, t.w * .5); t.boostAdd = 0; }
+  }
   const hyper = t.hyper > 0;
   const r = Math.hypot(t.x, t.z) || 1e-6;
   const sr = clamp01(t.w / t.w0);
@@ -499,26 +556,42 @@ function stepTop(t, dt) {
   // 壁とポケット
   const r2 = Math.hypot(t.x, t.z);
   const ang = Math.atan2(t.z, t.x);
-  const inPocket = POCKETS.some(p => Math.abs(Math.atan2(Math.sin(ang - p), Math.cos(ang - p))) < POCKET_W);
+  const inPocket = POCKETS.some(p0 => { const p = p0 + WALL.phase; return Math.abs(Math.atan2(Math.sin(ang - p), Math.cos(ang - p))) < POCKET_W; });
   const reach = t.g.maxR * .75;
   if (inPocket && !hyper) {   // ハイパー無敵中はポケットも壁として跳ね返る
-    if (r2 > ARENA_R + .15) { t.state = 'out'; t.vy = 1; t.reason = '場外'; }
+    if (r2 > ARENA_R + .15) {
+      if (t.passive === 'revive' && !t.revived) {
+        // パッシブ「リスポーン」：1回だけ、落ちる前と同じ回転のまま中央付近に戻る
+        t.revived = true;
+        const a = Math.random() * Math.PI * 2;
+        t.x = Math.cos(a) * .8; t.z = Math.sin(a) * .8; t.vx = t.vz = 0;
+        t.evt = 'revive';
+      } else { t.state = 'out'; t.vy = 1; t.reason = '場外'; }
+    }
   } else if (r2 + reach > ARENA_R) {
     const nx = t.x / r2, nz = t.z / r2;
     const vn = t.vx * nx + t.vz * nz;
     if (vn > 0) {
-      t.vx -= 1.65 * vn * nx; t.vz -= 1.65 * vn * nz;
-      // 壁との擦れで回転を失い、横に弾かれる
-      t.vx += -nz * t.w * .02; t.vz += nx * t.w * .02;
-      if (!hyper) t.w -= Math.min(t.w * .06, vn * 1.2);
+      const rubber = t.passive === 'rubber';
+      t.vx -= (rubber ? 1.9 : 1.65) * vn * nx; t.vz -= (rubber ? 1.9 : 1.65) * vn * nz;
+      // 壁との擦れで回転を失い、横に弾かれる。壁が回っているので、その向きにも少し押される
+      t.vx += -nz * (t.w * .02 + WALL_SPEED * ARENA_R * .25); t.vz += nx * (t.w * .02 + WALL_SPEED * ARENA_R * .25);
+      if (!hyper && !rubber) t.w -= Math.min(t.w * .06, vn * 1.2);   // パッシブ「ゴム壁」は壁で回転を失わない
       t.hitWall = vn;
     }
     t.x = nx * (ARENA_R - reach); t.z = nz * (ARENA_R - reach);
   }
 
-  if (!hyper) t.w -= spinDecayRate(t.g, t.w) * dt;   // ハイパー無敵中は回転が減らない（持久が最大）
+  // パッシブ「吸収回転」は回転の減りが1.6倍、「重装」は1.1倍
+  const drainK = t.passive === 'drain' ? 1.6 : t.passive === 'heavy' ? 1.1 : 1;
+  if (!hyper) t.w -= spinDecayRate(t.g, t.w) * drainK * dt;   // ハイパー無敵中は回転が減らない（持久が最大）
   t.th += t.w * dt;
-  if (t.w < OMEGA_MIN) { t.state = 'down'; t.reason = 'スピンアウト'; }
+  if (t.w < OMEGA_MIN) {
+    if (t.passive === 'guts' && !t.gutsUsed) {
+      // パッシブ「根性」：場外以外で倒れるとき、1回だけスタミナ1割で踏みとどまる
+      t.gutsUsed = true; t.w = OMEGA_MIN + (t.w0 - OMEGA_MIN) * .1; t.evt = 'guts';
+    } else { t.state = 'down'; t.reason = 'スピンアウト'; }
+  }
 }
 
 const _hits = [];
@@ -543,7 +616,7 @@ function collide(a, b) {
   const cx = sx / cnt, cz = sz / cnt;
   let nx = d > 1e-5 ? dx / d : 1, nz = d > 1e-5 ? dz / d : 0;
   // 「踏ん張り」中は重さが100（MASS_100）になる。回転の粘りも同じ割合で増える
-  const ka = guardK(a), kb = guardK(b);
+  const ka = kOf(a), kb = kOf(b);
   const ma = a.g.mass * ka, mb = b.g.mass * kb, Ia = a.g.inertia * ka, Ib = b.g.inertia * kb;
   // めり込みを少しずつ解消
   const corr = Math.min(cnt * .0025, .06);
@@ -571,7 +644,8 @@ function collide(a, b) {
   const Jx = (nx * j + tx * jt) * BOOST, Jz = (nz * j + tz * jt) * BOOST;
   // 「ダッシュ」中のコマにぶつけられた側は、2倍強く弾かれる
   // 「ハイパー無敵」中のコマにぶつけられた側も同じく2倍（攻撃が最大）
-  const da = (b.dash > 0 || b.hyper > 0) ? 2 : 1, db = (a.dash > 0 || a.hyper > 0) ? 2 : 1;
+  // パッシブ「逆境」：スタミナ3割未満のとき、ぶつけた相手を1.5倍強く弾く
+  const da = hitPower(b), db = hitPower(a);
   const wa0 = a.w, wb0 = b.w;
   a.vx += Jx / ma * da; a.vz += Jz / ma * da; b.vx -= Jx / mb * db; b.vz -= Jz / mb * db;
   a.w += (pax * Jx + paz * Jz) / Ia; b.w -= (pbx * Jx + pbz * Jz) / Ib;
@@ -580,6 +654,8 @@ function collide(a, b) {
   // ハイパー無敵中は、ぶつかっても自分の回転は減らない
   if (a.hyper > 0) a.w = Math.max(a.w, wa0);
   if (b.hyper > 0) b.w = Math.max(b.w, wb0);
+  // パッシブ「吸収回転」：ぶつかるたびに回転を最大の6%取り戻す
+  for (const t of [a, b]) if (t.passive === 'drain' && j * BOOST > .4) t.w = Math.min(t.w0 * (t.boostAdd ? 1.8 : 1), t.w + t.w0 * .06);
   _hits.push({ x: cx, z: cz, j: j * BOOST });
 }
 
@@ -594,7 +670,7 @@ function newBattle(entries) {
   const n = entries.length;
   const tops = entries.map((e, i) => {
     const [x, z] = startPos(i, n);
-    const t = makeTop(e.g, x, z, e.p, i, e.a, e.skill);
+    const t = makeTop(e.g, x, z, e.p, i, e.a, e.skill, e.passive);
     if (e.gone) { t.state = 'out'; t.y = -60; t.vx = t.vz = 0; t.reason = '退出'; t.outAt = 0; }
     return t;
   });
@@ -605,10 +681,12 @@ const ratio = t => t.w / t.w0;
 function stepBattle(B) {
   const T = B.tops;
   for (let s = 0; s < SUB; s++) {
+    WALL.phase = (B.t + s * DT) * WALL_SPEED;
     for (const t of T) stepTop(t, DT);
     for (let i = 0; i < T.length; i++) for (let j = i + 1; j < T.length; j++) collide(T[i], T[j]);
   }
   B.t += 1 / 60;
+  T.forEach((t, i) => { if (t.evt) { B.events.push([i, t.evt]); t.evt = null; } });
   if (B.over) return;
   for (const t of T) if (t.state !== 'spin' && t.outAt == null) t.outAt = B.t;
   const alive = T.filter(t => t.state === 'spin');
@@ -649,17 +727,38 @@ const SKILLS = {
   shock:  { name: '衝撃波',       desc: '近くの相手をまとめて吹き飛ばし、回転も少し奪う', cd: 9 },
   charge: { name: '回転チャージ', desc: '回転を最大の20%ぶん取り戻す',             uses: 2 },
   center: { name: '中央復帰',     desc: 'スタジアムの中央へ向きを変えて場外を防ぐ', uses: 3 },
-  hyper:  { name: 'ハイパー無敵', desc: '発動すると試合終了まで、重さ・攻撃・持久・安定がすべて最大になり、場外にもならない', uses: 1, after: 10 },
+  boost:  { name: 'スピンブースト', desc: '4秒間、回転の速さを大きく上げる。切れると上乗せ分が戻る', cd: 12 },
+  steer:  { name: '操縦',         desc: '5秒間、スタジアムをタップ（クリック）した場所へ向きを変えられる', cd: 14 },
+  hyper:  { name: 'ハイパー無敵', desc: '発動すると試合終了まで、重さ・攻撃・持久・安定がすべて最大になり、場外にもならない', uses: 1, after: 8 },
 };
 const SKILL_IDS = Object.keys(SKILLS);
 // 効果が続くスキルの残り時間（秒）。効果のないスキルは0
 // ハイパー無敵は時間切れがないので、発動中は 99（＝試合終了まで）として扱う
 const EFFECT_FOREVER = 99;
-const effectLeft = t => ({ dash: t.dash, guard: t.guard, hyper: t.hyper > 0 ? EFFECT_FOREVER : 0 }[t.skill] || 0);
+const effectLeft = t => ({ dash: t.dash, guard: t.guard, boost: t.boost, steer: t.steer, hyper: t.hyper > 0 ? EFFECT_FOREVER : 0 }[t.skill] || 0);
+
+// ───────── パッシブスキル ─────────
+// 対戦前に1つ選ぶ。ボタンは不要で、条件がそろうと自動で働く
+const PASSIVES = {
+  none:    { name: 'なし',       desc: 'パッシブスキルを使わない' },
+  revive:  { name: 'リスポーン', desc: '1回だけ、場外に落ちても落ちる前と同じ回転のまま中央に戻る' },
+  drain:   { name: '吸収回転',   desc: '回転の減りが1.6倍速くなるかわりに、ぶつかるたびに回転を取り戻す' },
+  guts:    { name: '根性',       desc: '場外以外で倒れるとき、1回だけスタミナ1割で踏みとどまる' },
+  heavy:   { name: '重装',       desc: '重さが1.3倍になるかわりに、最初の回転が1割少なく、減りも少し速い' },
+  rubber:  { name: 'ゴム壁',     desc: '壁に当たっても回転を失わず、強く跳ね返る' },
+  comeback:{ name: '逆境',       desc: 'スタミナが3割を切ると、ぶつけた相手を1.5倍強く弾く' },
+};
+const PASSIVE_IDS = Object.keys(PASSIVES);
+// スタミナ：倒れる回転（OMEGA_MIN）を0%、最初の回転を100%とした割合
+const stamina = t => clamp01((t.w - OMEGA_MIN) / (t.w0 - OMEGA_MIN));
+// ぶつけた相手を何倍強く弾くか（ダッシュ・ハイパー無敵・逆境）
+const hitPower = t => (t.dash > 0 || t.hyper > 0) ? 2 : (t.passive === 'comeback' && stamina(t) < .3) ? 1.5 : 1;
 // after：試合開始から何秒たてば使えるか（指定がなければ1秒後から）
 const skillLimit = id => (SKILLS[id].cd ? `クールダウン${SKILLS[id].cd}秒` : `1試合${SKILLS[id].uses}回まで`) + (SKILLS[id].after ? `・開始${SKILLS[id].after}秒後から` : '');
 // 「踏ん張り」中の重さの倍率。もともと重さ100以上なら変わらない
 const guardK = t => (t.guard > 0 || t.hyper > 0) ? Math.max(1, MASS_100 / t.g.mass) : 1;
+// 重さの倍率（パッシブ「重装」と、踏ん張り・ハイパー無敵の大きいほう）
+const kOf = t => Math.max(t.massK || 1, guardK(t) > 1 ? MASS_100 / t.g.mass : 1);
 const skillReady = (B, t) => !B.over && t.state === 'spin' && B.t >= t.cdUntil && t.uses > 0;
 
 function useSkill(B, i) {
@@ -679,11 +778,13 @@ function useSkill(B, i) {
     }
     case 'guard': t.guard = 4; break;
     case 'hyper': t.hyper = 1; break;   // 時間切れなし（試合終了まで続く）
+    case 'boost': t.boost = 4; t.boostAdd = t.w0 * .8; t.w += t.boostAdd; break;
+    case 'steer': t.steer = 5; break;
     case 'shock':
       for (const o of others) {
         const d = dist(o);
         if (d > 4 || d < 1e-4) continue;
-        const k = (10 * (1 - d / 4) + 4) / guardK(o);
+        const k = (10 * (1 - d / 4) + 4) / kOf(o);
         o.vx += (o.x - t.x) / d * k; o.vz += (o.z - t.z) / d * k;
         o.w *= o.guard > 0 ? .97 : .92;
       }
@@ -702,15 +803,32 @@ function useSkill(B, i) {
   return true;
 }
 
+// 「操縦」中：指定した場所へ向きを変える（速さは少なくとも4を保つ）
+function steerTo(B, i, x, z) {
+  const t = B.tops[i];
+  if (!t || t.state !== 'spin' || !(t.steer > 0) || B.over) return false;
+  const dx = x - t.x, dz = z - t.z, d = Math.hypot(dx, dz);
+  if (d < .2) return false;
+  const sp = Math.max(4, Math.hypot(t.vx, t.vz));
+  t.vx = dx / d * sp; t.vz = dz / d * sp;
+  return true;
+}
 // CPU のスキルの使いどころ
 function cpuSkillAI(B, i) {
   const t = B.tops[i];
+  if (t.steer > 0 && t.state === 'spin') {
+    // 操縦中の CPU は、いちばん近い相手へ向かう
+    const o = B.tops.filter(o => o !== t && o.state === 'spin').sort((a, b) => Math.hypot(a.x - t.x, a.z - t.z) - Math.hypot(b.x - t.x, b.z - t.z))[0];
+    if (o) steerTo(B, i, o.x, o.z);
+  }
   if (!skillReady(B, t)) return;
   const others = B.tops.filter(o => o !== t && o.state === 'spin');
   const near = others.reduce((m, o) => Math.min(m, Math.hypot(o.x - t.x, o.z - t.z)), 99);
   const go = {
     dash: near < 6 && Math.random() < .3,
     hyper: near < 2.5 || ratio(t) < .45,
+    boost: near < 3,
+    steer: near < 6,
     guard: near < 2.3,
     shock: near < 2.6,
     charge: ratio(t) < .4,
@@ -721,7 +839,7 @@ function cpuSkillAI(B, i) {
 
 // 画面なしで最後まで回す（動作確認用）
 window.__simulate = (list, ps) => {
-  const B = newBattle(list.map(([ch, f, sk], i) => ({ g: analyzeGlyph(ch, f), p: ps ? ps[i] : .85, skill: sk })));
+  const B = newBattle(list.map(([ch, f, sk, pv], i) => ({ g: analyzeGlyph(ch, f), p: ps ? ps[i] : .85, skill: sk, passive: pv })));
   let hits = 0, k = 0;
   while (!B.over) { stepBattle(B); hits += _hits.length; _hits.length = 0; if (++k % 15 === 0) for (let i = 0; i < B.tops.length; i++) cpuSkillAI(B, i); }
   return { winIdx: B.winIdx, code: B.code, order: B.order, t: +B.t.toFixed(1), hits };
@@ -746,6 +864,8 @@ const sun = new THREE.DirectionalLight(0xfff1d6, .9);
 sun.position.set(4, 10, 6); scene.add(sun);
 
 // すり鉢状のスタジアム
+// 壁は回るので、まとめて1つのグループに入れる（rotation.y = -WALL.phase でポケットの位置と合う）
+const wallGroup = new THREE.Group();
 (function buildArena() {
   const prof = [];
   for (let i = 0; i <= 24; i++) { const r = ARENA_R * i / 24; prof.push(new THREE.Vector2(r, height(r))); }
@@ -778,14 +898,15 @@ sun.position.set(4, 10, 6); scene.add(sun);
   const wallMat = new THREE.MeshStandardMaterial({ color: 0x2b375e, roughness: .5, metalness: .2 });
   const capMat = new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: .35, metalness: .6 });
   const segs = 3;
+  scene.add(wallGroup);
   for (let s = 0; s < segs; s++) {
     const a0 = POCKETS[s] + POCKET_W, a1 = POCKETS[(s + 1) % segs] - POCKET_W + (s === segs - 1 ? Math.PI * 2 : 0);
     // three.js の CylinderGeometry は θ を z→x 方向に測るので、atan2(z, x) の角度から変換する
     const geo = new THREE.CylinderGeometry(ARENA_R + .25, ARENA_R + .25, .55, 64, 1, true, Math.PI / 2 - a1, a1 - a0);
     const wall = new THREE.Mesh(geo, wallMat); wall.material.side = THREE.DoubleSide;
-    wall.position.y = height(ARENA_R) + .2; scene.add(wall);
+    wall.position.y = height(ARENA_R) + .2; wallGroup.add(wall);
     const rim = new THREE.Mesh(new THREE.TorusGeometry(ARENA_R + .25, .06, 8, 64, a1 - a0), capMat);
-    rim.rotation.x = Math.PI / 2; rim.rotation.z = a0; rim.position.y = height(ARENA_R) + .48; scene.add(rim);
+    rim.rotation.x = Math.PI / 2; rim.rotation.z = a0; rim.position.y = height(ARENA_R) + .48; wallGroup.add(rim);
   }
   // 床下の影
   const under = new THREE.Mesh(new THREE.CircleGeometry(ARENA_R + 3, 64), new THREE.MeshBasicMaterial({ color: 0x0b1020 }));
@@ -904,6 +1025,12 @@ window.addEventListener('resize', resize);
 if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(document.getElementById('arena'));
 
 // ───────── 画面と進行 ─────────
+// 形の変え方（倒す角度は15度刻みで±60度まで、回転は90度単位）。ほかの人から届いた値にも使う
+function cleanXf(v) {
+  const st = n => (typeof n === 'number' && isFinite(n)) ? Math.max(-60, Math.min(60, Math.round(n / 15) * 15)) : 0;
+  if (!v || typeof v !== 'object') return { ...XF0 };
+  return { rx: st(v.rx), ry: st(v.ry), rz: (typeof v.rz === 'number' && isFinite(v.rz)) ? ((Math.round(v.rz) % 4) + 4) % 4 : 0 };
+}
 const $ = id => document.getElementById(id);
 const CPU_POOL = ['〇', '山', '鬼', '米', '田', '永', '風', '龍', '卍', '口', '十', '円', '雷', '剣', '王', '火', '水', '木', '金', '土', '門', '愛', '傘', '嵐', '轟', '鬱', '一', '乙', '凸', '凹', '回', '串', 'W', 'S', '@', '★', '巴', '輪', '鑑', '黒'];
 const COLOR_ME = 0xe9724c;
@@ -919,6 +1046,7 @@ const store = {
 
 const S = {
   ch: store.get('mg.ch', '龍'), font: store.get('mg.font', 'gothic'), skill: store.get('mg.skill', 'dash'),
+  passive: store.get('mg.passive', 'none'), xf: cleanXf(store.get('mg.xf', null)),
   g: null, streak: 0,
   cpuN: Math.max(1, Math.min(3, store.get('mg.cpuN', 1) | 0)), cpus: [],
   kind: 'cpu',            // 'cpu' | 'online'
@@ -928,6 +1056,7 @@ const S = {
   gauge: 0, gaugeDir: 1, launchAt: 0, stage: null, preview: null, hud: [], aiAt: 0, skillLabel: '',
 };
 if (!SKILLS[S.skill]) S.skill = 'dash';
+if (!PASSIVES[S.passive]) S.passive = 'none';
 $('charInput').value = S.ch;
 
 // 勝敗理由はコードでやりとりし、表示文は各自の画面で組み立てる
@@ -959,6 +1088,39 @@ function renderSkills() {
     box.appendChild(b);
   }
   $('skillDesc').textContent = `${SKILLS[S.skill].desc}（${skillLimit(S.skill)}）`;
+}
+
+function renderPassives() {
+  const box = $('passives'); box.innerHTML = '';
+  for (const id of PASSIVE_IDS) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip'; b.textContent = PASSIVES[id].name;
+    b.setAttribute('aria-pressed', String(id === S.passive));
+    b.addEventListener('click', () => {
+      S.passive = id; store.set('mg.passive', id); renderPassives();
+      if (ON.R) { ON.R.presence({ passive: id }).catch(() => {}); updateRoomUI(); }
+    });
+    box.appendChild(b);
+  }
+  $('passiveDesc').textContent = PASSIVES[S.passive].desc;
+}
+
+function shapeText(xf) {
+  const parts = [];
+  if (xf.rx) parts.push(`${xf.rx > 0 ? '上' : '下'}に${Math.abs(xf.rx)}°`);
+  if (xf.ry) parts.push(`${xf.ry > 0 ? '左' : '右'}に${Math.abs(xf.ry)}°`);
+  let t = parts.length ? parts.join('・') + '倒す' : '';
+  if (xf.rz) t += (t ? '・' : '') + `${xf.rz * 90}°回転`;
+  return t || 'そのまま';
+}
+function changeShape(op) {
+  const xf = { ...S.xf };
+  if (op === 'up') xf.rx += 15; if (op === 'down') xf.rx -= 15;
+  if (op === 'left') xf.ry += 15; if (op === 'right') xf.ry -= 15;
+  if (op === 'cw') xf.rz += 1; if (op === 'ccw') xf.rz += 3;
+  S.xf = op === 'reset' ? { ...XF0 } : cleanXf(xf);
+  store.set('mg.xf', S.xf);
+  refreshGlyph();
 }
 
 function drawPreview(g) {
@@ -996,7 +1158,8 @@ async function refreshGlyph() {
   fitCharInput();
   await ensureFont(fontById(S.font), ch);
   if (token !== glyphToken) return;
-  const g = analyzeGlyph(ch, S.font);
+  const g = analyzeGlyph(ch, S.font, S.xf);
+  $('shapeDesc').textContent = shapeText(S.xf);
   if (g.cells < 30) {
     $('msg').textContent = 'この文字は形がほとんどないため、コマにできません。';
     S.g = null; updateButtons(); return;
@@ -1006,7 +1169,7 @@ async function refreshGlyph() {
   S.ch = ch; S.g = g; store.set('mg.ch', ch);
   drawPreview(g); showStats(g); showStreak();
   setIdle(g);
-  if (ON.R) ON.R.presence({ ch: S.ch, font: S.font }).catch(() => {});
+  if (ON.R) ON.R.presence({ ch: S.ch, font: S.font, xf: S.xf }).catch(() => {});
   updateButtons();
 }
 function fitCharInput() {
@@ -1038,7 +1201,8 @@ async function rerollCpus() {
   while (list.length < S.cpuN) {
     const ch = CPU_POOL[Math.floor(Math.random() * CPU_POOL.length)];
     if (used.has(ch) || list.some(c => c.ch === ch)) continue;
-    list.push({ ch, font: FONTS[Math.floor(Math.random() * FONTS.length)].id, skill: SKILL_IDS[Math.floor(Math.random() * SKILL_IDS.length)], g: null });
+    list.push({ ch, font: FONTS[Math.floor(Math.random() * FONTS.length)].id, skill: SKILL_IDS[Math.floor(Math.random() * SKILL_IDS.length)],
+      passive: PASSIVE_IDS[Math.floor(Math.random() * PASSIVE_IDS.length)], g: null });
   }
   S.cpus = list;
   renderCpuList();
@@ -1050,7 +1214,7 @@ function renderCpuList() {
   S.cpus.forEach((c, i) => {
     const d = document.createElement('div');
     d.className = 'glyph'; setGlyphEl(d, c.ch, c.font); d.style.color = FOE_CSS[i];
-    d.title = `CPU・${fontById(c.font).name}・${SKILLS[c.skill].name}`;
+    d.title = `CPU・${fontById(c.font).name}・${SKILLS[c.skill].name}・${PASSIVES[c.passive].name}`;
     box.appendChild(d);
   });
 }
@@ -1130,7 +1294,8 @@ function toLaunch(players, myIdx) {
 function startCpu() {
   if (!S.g || ON.R || S.cpus.length !== S.cpuN || S.cpus.some(c => !c.g)) return;
   S.kind = 'cpu';
-  toLaunch([{ ch: S.ch, font: S.font, g: S.g, skill: S.skill, name: 'あなた' }, ...S.cpus.map((c, i) => ({ ch: c.ch, font: c.font, g: c.g, skill: c.skill, name: `CPU${i + 1}` }))], 0);
+  toLaunch([{ ch: S.ch, font: S.font, g: S.g, skill: S.skill, passive: S.passive, name: 'あなた' },
+    ...S.cpus.map((c, i) => ({ ch: c.ch, font: c.font, g: c.g, skill: c.skill, passive: c.passive, name: `CPU${i + 1}` }))], 0);
 }
 
 // ゲージは88%付近が最大。行き過ぎると弱くなる
@@ -1173,8 +1338,8 @@ function shoot() {
   if (S.kind === 'cpu') {
     const n = S.players.length;
     S.battle = newBattle(S.players.map((pl, i) => i === 0
-      ? { g: pl.g, p, a, skill: pl.skill }
-      : { g: pl.g, p: .55 + Math.random() * .4, a: cpuAim(i, n), skill: pl.skill }));
+      ? { g: pl.g, p, a, skill: pl.skill, passive: pl.passive }
+      : { g: pl.g, p: .55 + Math.random() * .4, a: cpuAim(i, n), skill: pl.skill, passive: pl.passive }));
     startBattleMeshes();
     return;
   }
@@ -1201,11 +1366,14 @@ function pressSkill() {
   useSkill(B, S.myIdx);
 }
 
+// 合図の種類：アクティブスキルとパッシブスキルを1つの番号表にまとめる（オンラインではこの番号で送る）
+const EVENT_IDS = [...SKILL_IDS, ...PASSIVE_IDS];
 function showSkillToast(i, id) {
   const p = S.players[i], el = $('toast');
-  if (!p || !SKILLS[id]) return;
+  const def = SKILLS[id] || PASSIVES[id];
+  if (!p || !def) return;
   el.hidden = true;
-  el.textContent = `${p.name || p.ch}　${SKILLS[id].name}！`;
+  el.textContent = `${p.name || p.ch}　${def.name}！`;
   el.style.color = p.css;
   void el.offsetWidth;   // アニメーションを最初から流し直す
   el.hidden = false;
@@ -1222,7 +1390,7 @@ function updateSkillBtn() {
   const eff = B.remote ? (t.effLeft || 0) : Math.max(0, effectLeft(t));
   let label = SKILLS[id].name;
   if (eff >= EFFECT_FOREVER && t.state === 'spin') label += '　発動中（試合終了まで）';
-  else if (eff > 0 && t.state === 'spin') label += `　発動中　あと${eff.toFixed(1)}秒`;
+  else if (eff > 0 && t.state === 'spin') label += id === 'steer' ? `　あと${eff.toFixed(1)}秒・画面をタップ` : `　発動中　あと${eff.toFixed(1)}秒`;
   else {
     if (SKILLS[id].uses) label += `　残り${uses}回`;
     if (cdLeft > 0 && uses > 0) label += `　${cdLeft.toFixed(1)}秒`;
@@ -1415,7 +1583,7 @@ const ON = {
   seats: [], members: [], glyphs: new Map(),
   ready: false, m: 0, phase: 'lobby', players: [], gone: new Set(), myShot: null,
   rec: { w: 0, l: 0 }, sentAt: 0, hitSeq: 0, seenHit: 0, evSeq: 0, seenEv: 0, hits: [], evs: [],
-  skLast: new Map(), skPend: new Map(), skN: 0, full: false,
+  skLast: new Map(), skPend: new Map(), stLast: new Map(), skN: 0, stN: 0, full: false,
 };
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -1584,8 +1752,8 @@ async function joinRoom(code, role) {
   onMsg('');
   ON.unsubPeers = ON.R.onPeers(() => sync(), () => { onMsg('ルームとの接続が切れました。退出して入り直してください。'); });
   resetChat();
-  ON.R.presence({ v: 2, chat: [], role, name: ON.name, ch: S.ch, font: S.font, skill: S.skill, ready: false,
-    phase: role === 'host' ? 'lobby' : null, m: 0, seats: [], players: [], shot: null, sk: null, s: null, res: null }).catch(() => {});
+  ON.R.presence({ v: 2, chat: [], role, name: ON.name, ch: S.ch, font: S.font, xf: S.xf, skill: S.skill, passive: S.passive, ready: false,
+    phase: role === 'host' ? 'lobby' : null, m: 0, seats: [], players: [], shot: null, sk: null, st: null, s: null, res: null }).catch(() => {});
   updateRoomUI();
   // 番号違いに気づけるよう、しばらくホストが見つからなければ知らせる
   if (role === 'guest') setTimeout(() => { if (ON.R && !ON.hostPeer) onMsg('このルーム番号の部屋が見つかりません。番号を確かめるか、ホストがルームを開くのを待ってください。'); }, 4000);
@@ -1611,13 +1779,13 @@ function makeCode() {
 }
 
 // 文字の形の解析は時間がかかるので、文字と書体の組ごとに一度だけ行って覚えておく
-function glyphFor(ch, font) {
-  const key = ch + '|' + font;
+function glyphFor(ch, font, xf = XF0) {
+  const key = ch + '|' + font + '|' + xfKey(xf);
   if (ON.glyphs.has(key)) { const v = ON.glyphs.get(key); return v === 'loading' ? undefined : v; }
   ON.glyphs.set(key, 'loading');
   (async () => {
     await ensureFont(fontById(font), ch);
-    const g = analyzeGlyph(ch, font);
+    const g = analyzeGlyph(ch, font, xf);
     ON.glyphs.set(key, g.cells >= 30 ? g : null);
     sync();
   })();
@@ -1656,12 +1824,13 @@ function sync() {
   // 参加者の一覧（ホストが先頭、あとは座席順）
   const ids = ON.role === 'host' ? [ON.me, ...ON.seats] : (hostP ? [hostP.peer, ...ON.seats] : []);
   ON.members = ids.map(id => {
-    if (id === ON.me) return { peer: id, me: true, host: ON.role === 'host', name: ON.name, ch: S.ch, font: S.font, skill: S.skill, ready: ON.ready, g: S.g };
+    if (id === ON.me) return { peer: id, me: true, host: ON.role === 'host', name: ON.name, ch: S.ch, font: S.font, xf: S.xf, skill: S.skill, passive: S.passive, ready: ON.ready, g: S.g };
     const p = byPeer.get(id);
     if (!p) return null;
-    const pr = p.presence, ch = cleanCh(pr.ch), font = cleanFont(pr.font);
-    return { peer: id, me: false, host: pr.role === 'host', name: cleanName(pr.name) || '名無し', ch, font, skill: cleanSkill(pr.skill), ready: pr.ready === true,
-      g: ch && font ? glyphFor(ch, font) : null, pres: pr };
+    const pr = p.presence, ch = cleanCh(pr.ch), font = cleanFont(pr.font), xf = cleanXf(pr.xf);
+    return { peer: id, me: false, host: pr.role === 'host', name: cleanName(pr.name) || '名無し', ch, font, xf, skill: cleanSkill(pr.skill),
+      passive: PASSIVES[pr.passive] ? pr.passive : 'none', ready: pr.ready === true,
+      g: ch && font ? glyphFor(ch, font, xf) : null, pres: pr };
   }).filter(Boolean);
   chatSync(others);
   if (ON.role === 'host') hostTick(byPeer); else guestTick(hostP ? hostP.presence : null);
@@ -1697,11 +1866,11 @@ function hostTick(byPeer) {
   const guests = ON.members.filter(m => !m.me);
   if ((ON.phase === 'lobby' || ON.phase === 'result') && S.mode === 'idle' && ON.ready && S.g &&
       guests.length >= 1 && guests.every(m => m.ready && m.g)) {
-    ON.m++; ON.phase = 'launch'; ON.ready = false; ON.myShot = null; ON.gone = new Set(); ON.skLast = new Map(); ON.skPend = new Map();
+    ON.m++; ON.phase = 'launch'; ON.ready = false; ON.myShot = null; ON.gone = new Set(); ON.skLast = new Map(); ON.skPend = new Map(); ON.stLast = new Map();
     ON.players = ON.members.map(m => m.peer);
     ON.R.presence({ phase: 'launch', m: ON.m, players: ON.players, ready: false, res: null, s: null }).catch(() => {});
     S.kind = 'online';
-    toLaunch(ON.members.map(m => ({ ch: m.ch, font: m.font, g: m.g, skill: m.skill, name: m.name })), 0);
+    toLaunch(ON.members.map(m => ({ ch: m.ch, font: m.font, g: m.g, skill: m.skill, passive: m.passive, name: m.name })), 0);
     return;
   }
   if (ON.phase === 'launch' || ON.phase === 'battle') {
@@ -1722,8 +1891,8 @@ function hostTick(byPeer) {
     if (shots.every(Boolean) || late) {
       S.battle = newBattle(S.players.map((pl, i) => {
         const sh = shots[i];
-        return sh === 'gone' ? { g: pl.g, skill: pl.skill, p: .5, gone: true }
-          : { g: pl.g, skill: pl.skill, p: sh ? sh.p : .5, a: sh ? sh.a : undefined };
+        return sh === 'gone' ? { g: pl.g, skill: pl.skill, passive: pl.passive, p: .5, gone: true }
+          : { g: pl.g, skill: pl.skill, passive: pl.passive, p: sh ? sh.p : .5, a: sh ? sh.a : undefined };
       }));
       ON.phase = 'battle'; ON.hits = []; ON.evs = [];
       startBattleMeshes();
@@ -1743,6 +1912,16 @@ function hostTick(byPeer) {
       if (!pend || pend.n !== n) ON.skPend.set(i, { n, at: S.battle.t });
       const since = S.battle.t - ON.skPend.get(i).at;
       if (useSkill(S.battle, i) || since > .6) { ON.skLast.set(i, n); ON.skPend.delete(i); }
+    });
+    // ゲストの「操縦」：タップした場所（番号 n が増えたときだけ）
+    ON.players.forEach((id, i) => {
+      if (i === 0) return;
+      const p = byPeer.get(id), st = p && p.presence.st;
+      if (!st || typeof st !== 'object' || st.m !== ON.m) return;
+      const n = num(st.n, 0, 1e9, 0);
+      if (n <= (ON.stLast.get(i) || 0)) return;
+      ON.stLast.set(i, n);
+      steerTo(S.battle, i, num(st.x, -8, 8, 0), num(st.z, -8, 8, 0));
     });
   }
 }
@@ -1770,9 +1949,9 @@ function guestTick(hp) {
     const myIdx = ids.indexOf(ON.me);
     if (myIdx < 0) { ON.m = m; onMsg('試合が始まりました。次の試合から参加できます。'); return; }
     const players = ids.map(id => {
-      if (id === ON.me) return { ch: S.ch, font: S.font, g: S.g, skill: S.skill, name: ON.name };
+      if (id === ON.me) return { ch: S.ch, font: S.font, g: S.g, skill: S.skill, passive: S.passive, name: ON.name };
       const mm = ON.members.find(x => x.peer === id);
-      return mm && mm.g ? { ch: mm.ch, font: mm.font, g: mm.g, skill: mm.skill, name: mm.name } : null;
+      return mm && mm.g ? { ch: mm.ch, font: mm.font, g: mm.g, skill: mm.skill, passive: mm.passive, name: mm.name } : null;
     });
     if (players.some(p => !p)) return;   // 文字の形を読み込み中。次の更新でもう一度試す
     ON.m = m; ON.ready = false; ON.myShot = null; ON.seenHit = 0; ON.seenEv = 0; ON.players = ids;
@@ -1821,7 +2000,7 @@ function applySnap(s) {
     const k = num(e[0], 0, 1e9, 0);
     if (k <= ON.seenEv) continue;
     ON.seenEv = k;
-    showSkillToast(num(e[1], 0, B.tops.length - 1, 0) | 0, SKILL_IDS[num(e[2], 0, SKILL_IDS.length - 1, 0) | 0]);
+    showSkillToast(num(e[1], 0, B.tops.length - 1, 0) | 0, EVENT_IDS[num(e[2], 0, EVENT_IDS.length - 1, 0) | 0]);
   }
   if (Array.isArray(s.o) && !B.over) {
     const n = B.tops.length;
@@ -1856,7 +2035,8 @@ function updateRoomUI() {
     const parts = [m.name + (m.me ? '（あなた）' : '')];
     if (m.host) parts[0] += '・ホスト';
     if (m.font) parts.push(fontById(m.font).name);
-    parts.push(SKILLS[m.skill].name, m.ready ? '準備OK' : '準備中');
+    if (m.xf && xfKey(m.xf) !== xfKey(XF0)) parts.push(shapeText(m.xf));
+    parts.push(SKILLS[m.skill].name, PASSIVES[m.passive || 'none'].name, m.ready ? '準備OK' : '準備中');
     who.textContent = parts.join('・') + (!m.me && m.g === null ? '（この文字は使えません）' : '');
     row.append(g, who); box.append(row);
   }
@@ -1944,6 +2124,25 @@ function selectCode() {
   const r = document.createRange(); r.selectNodeContents($('codeOut'));
   const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
 }
+// 「操縦」中にスタジアムをタップ（クリック）すると、その場所へ向きを変える
+const raycaster = new THREE.Raycaster(), floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -.6), hitPoint = new THREE.Vector3();
+canvas.addEventListener('pointerdown', e => {
+  const B = S.battle;
+  if (S.mode !== 'battle' || !B || B.over) return;
+  const t = B.tops[S.myIdx];
+  const active = B.remote ? (t.effLeft > 0 && S.players[S.myIdx].skill === 'steer') : t.steer > 0;
+  if (!active || t.state !== 'spin') return;
+  const r = canvas.getBoundingClientRect();
+  raycaster.setFromCamera({ x: (e.clientX - r.left) / r.width * 2 - 1, y: -((e.clientY - r.top) / r.height * 2 - 1) }, camera);
+  if (!raycaster.ray.intersectPlane(floorPlane, hitPoint)) return;
+  burst(hitPoint.x, .7, hitPoint.z, 8, 1);   // タップした場所の目印
+  if (B.remote) {
+    ON.stN = (ON.stN || 0) + 1;
+    ON.R.presence({ st: { m: ON.m, n: ON.stN, x: +hitPoint.x.toFixed(2), z: +hitPoint.z.toFixed(2) } }).catch(() => {});
+  } else steerTo(B, S.myIdx, hitPoint.x, hitPoint.z);
+});
+document.querySelectorAll('#shapeBtns .chip').forEach(b => b.addEventListener('click', () => changeShape(b.dataset.xf)));
+
 // スペースキー：発射中は強さ・角度の決定、対戦中はスキル（文字の入力中は反応しない）
 window.addEventListener('keydown', e => {
   const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
@@ -1996,7 +2195,7 @@ function frame(now) {
       _hits.length = 0;
       for (const [i, id] of B.events) {
         showSkillToast(i, id);
-        if (S.kind === 'online') ON.evs.push([++ON.evSeq, i, SKILL_IDS.indexOf(id)]);
+        if (S.kind === 'online') ON.evs.push([++ON.evSeq, i, EVENT_IDS.indexOf(id)]);
       }
       B.events.length = 0;
       if (ON.hits.length > 12) ON.hits.splice(0, ON.hits.length - 12);
@@ -2017,6 +2216,10 @@ function frame(now) {
     const doneRemote = B.remote && B.over && now - B.overSeen > 1200;
     if (S.mode === 'battle' && (doneLocal || doneRemote)) finish();
   }
+  // 壁の回転：対戦中は試合時間に合わせ（ポケットの位置と一致させる）、待機中はゆっくり回して見せる
+  if (S.battle && (S.mode === 'battle' || S.mode === 'result')) wallGroup.rotation.y = -S.battle.t * WALL_SPEED;
+  else if (S.mode === 'idle') wallGroup.rotation.y = -now / 1000 * WALL_SPEED * .5;
+  else wallGroup.rotation.y = 0;
   stepSparks(dt);
   if (renderer) renderer.render(scene, camera);
   requestAnimationFrame(frame);
@@ -2025,6 +2228,7 @@ function frame(now) {
 resize();
 renderFontChips();
 renderSkills();
+renderPassives();
 renderCpuCount();
 updateRoomUI();
 initRoom();
