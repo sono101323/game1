@@ -26,7 +26,8 @@ body {
   font-family: var(--font-body); font-size: 15px; line-height: 1.6;
   overflow: hidden; -webkit-tap-highlight-color: transparent;
 }
-#stage { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+#arena { position: fixed; inset: 0; overflow: hidden; }
+#stage { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
@@ -77,7 +78,7 @@ button { cursor: pointer; }
 .tabs { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
 .tab { background: transparent; border: 0; padding: 8px; font-size: 13px; color: var(--muted); }
 .tab[aria-selected="true"] { background: var(--ink); color: var(--brass); }
-.pane { display: flex; flex-direction: column; gap: 12px; }
+.pane, #onOut, #onIn { display: flex; flex-direction: column; gap: 12px; }
 .note { margin: 0; font-size: 12px; color: var(--muted); }
 .joinrow { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 #codeIn { background: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 6px 10px; letter-spacing: .3em; text-transform: uppercase; min-width: 0; }
@@ -94,7 +95,7 @@ button { cursor: pointer; }
 .streak { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .hud {
-  position: fixed; left: 16px; right: 16px; top: calc(14px + env(safe-area-inset-top, 0px));
+  position: absolute; left: 16px; right: 16px; top: calc(14px + env(safe-area-inset-top, 0px));
   display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: center; pointer-events: none;
 }
 .side { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -106,7 +107,7 @@ button { cursor: pointer; }
 #timer { font-family: var(--font-display); font-size: 20px; font-variant-numeric: tabular-nums; }
 
 .launch {
-  position: fixed; left: 50%; transform: translateX(-50%);
+  position: absolute; left: 50%; transform: translateX(-50%);
   bottom: calc(18px + env(safe-area-inset-bottom, 0px)); width: min(420px, calc(100% - 32px));
   display: grid; gap: 10px; text-align: center;
 }
@@ -115,7 +116,7 @@ button { cursor: pointer; }
 .gauge::after { content: ""; position: absolute; left: 88%; top: 0; bottom: 0; width: 2px; background: var(--paper); opacity: .5; }
 
 .result {
-  position: fixed; inset: 0; display: grid; place-items: center; padding: 16px;
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 16px;
   background: color-mix(in srgb, var(--ink) 55%, transparent);
 }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 24px; width: min(320px, 100%); box-sizing: border-box; display: grid; gap: 14px; text-align: center; }
@@ -125,7 +126,15 @@ button { cursor: pointer; }
 .row > * { flex: 1; }
 
 @media (max-width: 640px) {
-  .sheet { top: auto; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); max-height: 60%; padding: 14px; gap: 12px; }
+  /* スマホでは上にスタジアム、その下に設定を縦に並べ、ページ全体をスクロールさせる */
+  html, body { height: auto; }
+  body { overflow-x: hidden; overflow-y: auto; }
+  #arena { position: relative; inset: auto; height: clamp(300px, 52vh, 460px); }
+  body.playing #arena { height: clamp(360px, 80vh, 720px); }
+  .hud, .launch { top: auto; }
+  .hud { top: 12px; }
+  .launch { bottom: 14px; }
+  .sheet { position: static; width: auto; max-height: none; margin: 12px 16px 24px; padding: 14px; gap: 12px; backdrop-filter: none; }
   .pick { grid-template-columns: 72px 1fr; gap: 12px; }
   #charInput, #preview { width: 72px; height: 72px; }
   #charInput { font-size: 44px; }
@@ -134,7 +143,36 @@ button { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
 </style>
 
+<div id="arena">
 <canvas id="stage" aria-label="対戦スタジアム"></canvas>
+
+<div class="hud" id="hud" hidden>
+  <div class="side"><span class="g" id="hudYou" style="color:var(--you)">龍</span><div class="spin"><i id="spinYou" style="background:var(--you)"></i></div></div>
+  <div id="timer">60</div>
+  <div class="side r"><span class="g" id="hudFoe" style="color:var(--foe)">〇</span><div class="spin"><i id="spinFoe" style="background:var(--foe)"></i></div></div>
+</div>
+
+<div class="launch" id="launch" hidden>
+  <div class="label" id="launchMsg">ゲージが右端近くで止まるほど強く回ります</div>
+  <div class="gauge"><i id="gaugeFill"></i></div>
+  <button class="go" id="shoot" type="button">シュート</button>
+</div>
+
+<div class="result" id="result" hidden>
+  <div class="card" role="dialog" aria-labelledby="verdict">
+    <div class="verdict" id="verdict">勝</div>
+    <div class="reason" id="reason"></div>
+    <div class="streak" id="resStreak"></div>
+    <div class="row">
+      <button class="go" id="next" type="button">次の相手</button>
+    </div>
+    <div class="row">
+      <button class="ghost" id="again" type="button">同じ相手と再戦</button>
+      <button class="ghost" id="change" type="button">文字を変える</button>
+    </div>
+  </div>
+</div>
+</div>
 
 <section class="sheet" id="setup" aria-label="コマの設定">
   <div class="brand"><h1>文字ゴマ道場</h1><small>一文字で回せ</small></div>
@@ -199,33 +237,6 @@ button { cursor: pointer; }
   </div>
   <p class="msg" id="msg" role="status"></p>
 </section>
-
-<div class="hud" id="hud" hidden>
-  <div class="side"><span class="g" id="hudYou" style="color:var(--you)">龍</span><div class="spin"><i id="spinYou" style="background:var(--you)"></i></div></div>
-  <div id="timer">60</div>
-  <div class="side r"><span class="g" id="hudFoe" style="color:var(--foe)">〇</span><div class="spin"><i id="spinFoe" style="background:var(--foe)"></i></div></div>
-</div>
-
-<div class="launch" id="launch" hidden>
-  <div class="label" id="launchMsg">ゲージが右端近くで止まるほど強く回ります</div>
-  <div class="gauge"><i id="gaugeFill"></i></div>
-  <button class="go" id="shoot" type="button">シュート</button>
-</div>
-
-<div class="result" id="result" hidden>
-  <div class="card" role="dialog" aria-labelledby="verdict">
-    <div class="verdict" id="verdict">勝</div>
-    <div class="reason" id="reason"></div>
-    <div class="streak" id="resStreak"></div>
-    <div class="row">
-      <button class="go" id="next" type="button">次の相手</button>
-    </div>
-    <div class="row">
-      <button class="ghost" id="again" type="button">同じ相手と再戦</button>
-      <button class="ghost" id="change" type="button">文字を変える</button>
-    </div>
-  </div>
-</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -644,20 +655,21 @@ function placeMesh(m, t) {
 }
 
 function resize() {
-  const w = window.innerWidth, h = window.innerHeight;
+  const box = document.getElementById('arena');
+  const w = box.clientWidth || window.innerWidth, h = box.clientHeight || window.innerHeight;
   if (renderer) { renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.setSize(w, h, false); }
   camera.aspect = w / h;
   // スタジアム全体（直径約13）が横幅に収まる距離をとる
   const fitH = 7.6 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const fitW = fitH / Math.min(1, camera.aspect);
   const dist = Math.max(13, fitW * .95);
-  const narrow = w <= 640;
   camera.position.set(0, dist * .78, dist * .62);
-  camera.lookAt(0, narrow && S.mode === 'idle' ? -dist * .17 : 0, 0);
+  camera.lookAt(0, 0, 0);
   scene.fog.near = dist * 1.1; scene.fog.far = dist * 2.2;
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize);
+if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(document.getElementById('arena'));
 
 // ───────── 画面と進行 ─────────
 const $ = id => document.getElementById(id);
@@ -772,7 +784,9 @@ function clearBattleMeshes() { for (const m of S.meshes) m.dispose(); S.meshes =
 // 発射画面へ。foe は相手の文字（CPU か、オンラインの相手）
 function toLaunch(foeCh, foeFont) {
   initAudio();
-  S.mode = 'launch'; resize();
+  S.mode = 'launch';
+  document.body.classList.add('playing'); resize();
+  window.scrollTo(0, 0);
   if (S.idleMesh) { S.idleMesh.dispose(); S.idleMesh = null; }
   clearBattleMeshes();
   $('setup').hidden = true; $('result').hidden = true;
@@ -852,7 +866,8 @@ function finish() {
 function backToSetup() {
   clearBattleMeshes();
   S.battle = null;
-  S.mode = 'idle'; resize();
+  S.mode = 'idle';
+  document.body.classList.remove('playing'); resize();
   $('result').hidden = true; $('hud').hidden = true; $('launch').hidden = true; $('setup').hidden = false;
   showStreak();
   if (S.g) setIdle(S.g);
