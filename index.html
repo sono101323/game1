@@ -385,13 +385,18 @@ function spinDecayRate(g, w) {
   return friction + air + wobble;
 }
 
-function makeTop(g, x, z, power, side) {
+// angle：打ち出す向き（ラジアン。x軸から z軸へ回る向きが正）。省略時は中心を左回りに回り込む向き
+function makeTop(g, x, z, power, side, angle) {
   const w0 = 34 + 30 * power;
-  // 発射の向き：中心を左回りに回り込むように
-  const r = Math.hypot(x, z) || 1;
-  const tx = -z / r, tz = x / r;
   const sp = 2.5 + 3 * power;
-  return { g, side, x, z, vx: tx * sp - x / r * .8, vz: tz * sp - z / r * .8, th: 0, w: w0, w0,
+  let vx, vz;
+  if (typeof angle === 'number' && isFinite(angle)) {
+    vx = Math.cos(angle) * sp; vz = Math.sin(angle) * sp;
+  } else {
+    const r = Math.hypot(x, z) || 1;
+    vx = -z / r * sp - x / r * .8; vz = x / r * sp - z / r * .8;
+  }
+  return { g, side, x, z, vx, vz, th: 0, w: w0, w0,
            state: 'spin', y: 0, tilt: 0, prec: 0, fall: 0 };
 }
 
@@ -507,10 +512,12 @@ function collide(a, b) {
   _hits.push({ x: cx, z: cz, j: j * BOOST });
 }
 
-function newBattle(gYou, gFoe, pYou, pFoe) {
+const STARTS = [[-3.2, 1.2], [3.2, -1.2]];   // tops[0] と tops[1] の発射位置
+function newBattle(gYou, gFoe, pYou, pFoe, aYou, aFoe) {
   return {
     t: 0, over: false,
-    tops: [makeTop(gYou, -3.2, 1.2, pYou, 'you'), makeTop(gFoe, 3.2, -1.2, pFoe, 'foe')],
+    tops: [makeTop(gYou, STARTS[0][0], STARTS[0][1], pYou, 'you', aYou),
+           makeTop(gFoe, STARTS[1][0], STARTS[1][1], pFoe, 'foe', aFoe)],
   };
 }
 const SUB = 4, DT = 1 / 60 / SUB;
@@ -664,6 +671,25 @@ function stepSparks(dt) {
     for (let a = 0; a < 3; a++) sparkPos[k * 3 + a] += sparkVel[k * 3 + a] * dt;
   }
   sparkGeo.attributes.position.needsUpdate = true;
+}
+
+// 射出角を選ぶ矢印（自分の発射位置のまわりを回る）
+const aimArrow = (() => {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: 0xd9a441, depthTest: false, transparent: true, opacity: .95 });
+  const shaft = new THREE.Mesh(new THREE.BoxGeometry(1.5, .04, .16), mat);
+  shaft.position.x = 1.95; g.add(shaft);
+  const head = new THREE.Mesh(new THREE.ConeGeometry(.32, .6, 20), mat);
+  head.rotation.z = -Math.PI / 2; head.position.x = 3.0; g.add(head);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.12, 1.2, 64), new THREE.MeshBasicMaterial({ color: 0xd9a441, depthTest: false, transparent: true, opacity: .45, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2; g.add(ring);
+  g.renderOrder = 10; g.traverse(o => { o.renderOrder = 10; });
+  g.visible = false; scene.add(g);
+  return g;
+})();
+function placeArrow(x, z, angle) {
+  aimArrow.position.set(x, height(Math.hypot(x, z)) + .45, z);
+  aimArrow.rotation.y = -angle;   // 矢印の +x 方向を (cos, sin) に向ける
 }
 
 // 効果音（最初の操作のあとにだけ鳴らせる）
@@ -822,7 +848,7 @@ function setIdle(g) {
 function clearBattleMeshes() { for (const m of S.meshes) m.dispose(); S.meshes = []; }
 
 // 発射画面へ。foe は相手の文字（CPU か、オンラインの相手）
-function toLaunch(foeCh, foeFont) {
+function toLaunch(foeCh, foeFont, foeG) {
   initAudio();
   S.mode = 'launch';
   document.body.classList.add('playing'); resize();
@@ -837,34 +863,62 @@ function toLaunch(foeCh, foeFont) {
   $('spinYou').style.width = '0%'; $('spinFoe').style.width = '0%';
   placeChat();
   S.gauge = 0; S.gaugeDir = 1; S.launchAt = performance.now();
+  // 発射位置に両方のコマを置いて見せる
+  S.stage = 'power'; S.lockedPower = null;
+  const mine = STARTS[S.myIdx], theirs = STARTS[1 - S.myIdx];
+  S.preview = [
+    { g: S.g, x: mine[0], z: mine[1], y: 0, th: 0, w: 12, w0: 12, state: 'spin', prec: 0, fall: 0 },
+    { g: foeG, x: theirs[0], z: theirs[1], y: 0, th: 0, w: 12, w0: 12, state: 'spin', prec: 0, fall: 0 },
+  ];
+  S.meshes = [buildTopMesh(S.g, COLOR_ME), buildTopMesh(foeG, COLOR_FOE)];
+  // 矢印は最初に中心を向く
+  S.aim = Math.atan2(-mine[1], -mine[0]);
+  aimArrow.visible = false;
+  $('shoot').textContent = '強さを決める';
   $('shoot').focus();
 }
 
 function startCpu() {
   if (!S.g || !S.foeG || ON.R) return;
   S.kind = 'cpu'; S.myIdx = 0;
-  toLaunch(S.foeCh, S.foeFont);
+  toLaunch(S.foeCh, S.foeFont, S.foeG);
 }
 
 // ゲージは88%付近が最大。行き過ぎると弱くなる
 const gaugePower = () => clamp01(1 - Math.abs(S.gauge - .88) / .88);
 
+// 1回目のタップで強さ、2回目のタップで角度を決めて打ち出す
 function shoot() {
   if (S.mode !== 'launch') return;
-  const p = gaugePower();
+  if (S.stage === 'power') {
+    S.lockedPower = gaugePower();
+    S.stage = 'aim';
+    aimArrow.visible = true;
+    $('shoot').textContent = '角度を決めて打つ';
+    $('launchMsg').textContent = '回る矢印が狙いの向きに来たら押します';
+    return;
+  }
+  if (S.stage !== 'aim') return;
+  S.stage = 'done';
+  aimArrow.visible = false;
+  const p = S.lockedPower, a = Math.round(S.aim * 1000) / 1000;
   if (S.kind === 'cpu') {
-    S.battle = newBattle(S.g, S.foeG, p, .55 + Math.random() * .4);
+    // CPU はだいたい相手のほうを狙う
+    const [cx, cz] = STARTS[1], [px, pz] = STARTS[0];
+    const cpuAim = Math.atan2(pz - cz, px - cx) + (Math.random() - .5) * 1.4;
+    S.battle = newBattle(S.g, S.foeG, p, .55 + Math.random() * .4, a, cpuAim);
+    clearBattleMeshes();
     S.meshes = [buildTopMesh(S.g, COLOR_ME), buildTopMesh(S.foeG, COLOR_FOE)];
-    S.mode = 'battle';
+    S.mode = 'battle'; S.preview = null;
     $('launch').hidden = true;
     return;
   }
   if (ON.myShot != null) return;
-  ON.myShot = p;
+  ON.myShot = { p, a };
   $('shoot').hidden = true;
   $('launchMsg').textContent = '相手のシュートを待っています';
   if (ON.role === 'host') hostTick();
-  else ON.R.presence({ shot: { m: ON.m, p } }).catch(() => {});
+  else ON.R.presence({ shot: { m: ON.m, p, a } }).catch(() => {});
 }
 
 function finish() {
@@ -905,6 +959,7 @@ function finish() {
 }
 
 function backToSetup() {
+  aimArrow.visible = false; S.preview = null;
   clearBattleMeshes();
   S.battle = null;
   S.mode = 'idle';
@@ -933,8 +988,15 @@ function addChatLine(who, text) {
   const sp = document.createElement('span'); sp.textContent = text; row.append(sp);
   log.append(row);
   while (log.children.length > 60) log.firstChild.remove();
-  log.scrollTop = log.scrollHeight;
+  chatToBottom();
 }
+// チャットは常に最新の発言（最下部）を見せる。欄を移したり表示し直したりしても先頭に戻らないようにする
+function chatToBottom() {
+  const log = $('chatLog');
+  log.scrollTop = log.scrollHeight;
+  requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
+}
+if (window.ResizeObserver) new ResizeObserver(() => chatToBottom()).observe($('chatLog'));
 function resetChat() {
   CHAT.mine = []; CHAT.seq = 0; CHAT.seen.clear(); CHAT.oppPeer = null;
   $('chatLog').textContent = ''; $('chatIn').value = '';
@@ -981,6 +1043,7 @@ function placeChat() {
   chat.classList.toggle('float', floating);
   if (floating) $('arena').insertBefore(chat, $('result'));
   else $('onIn').append(chat);
+  chatToBottom();
 }
 
 // ───────── オンライン対戦 ─────────
@@ -1204,15 +1267,17 @@ function hostTick() {
     ON.m++; ON.phase = 'launch'; ON.ready = false; ON.myShot = null;
     ON.R.presence({ phase: 'launch', m: ON.m, ready: false, res: null, s: null }).catch(() => {});
     S.kind = 'online'; S.myIdx = 0;
-    toLaunch(ON.oppCh, ON.oppFont);
+    toLaunch(ON.oppCh, ON.oppFont, ON.oppG);
     return;
   }
   if (ON.phase === 'launch' && S.mode === 'launch' && ON.myShot != null && pr && pr.shot &&
       pr.shot.m === ON.m && ON.oppG) {
     const pGuest = num(pr.shot.p, 0, 1, .5);
-    S.battle = newBattle(S.g, ON.oppG, ON.myShot, pGuest);
+    const aGuest = typeof pr.shot.a === 'number' ? num(pr.shot.a, -10, 10, undefined) : undefined;
+    S.battle = newBattle(S.g, ON.oppG, ON.myShot.p, pGuest, ON.myShot.a, aGuest);
+    clearBattleMeshes();
     S.meshes = [buildTopMesh(S.g, COLOR_ME), buildTopMesh(ON.oppG, COLOR_FOE)];
-    S.mode = 'battle'; ON.phase = 'battle'; ON.hits = [];
+    S.mode = 'battle'; S.preview = null; ON.phase = 'battle'; ON.hits = [];
     $('launch').hidden = true;
     ON.R.presence({ phase: 'battle' }).catch(() => {});
   }
@@ -1239,13 +1304,14 @@ function guestTick(hp) {
     ON.m = m; ON.ready = false; ON.myShot = null; ON.seenHit = 0;
     ON.R.presence({ ready: false, shot: null }).catch(() => {});
     S.kind = 'online'; S.myIdx = 1;
-    toLaunch(ON.oppCh, ON.oppFont);
+    toLaunch(ON.oppCh, ON.oppFont, ON.oppG);
   }
   if (hp.phase === 'battle' && m === ON.m && S.mode === 'launch' && ON.myShot != null) {
     const mk = g => ({ g, x: 0, z: 0, tx: 0, tz: 0, y: 0, th: 0, w: 40, w0: 40, state: 'spin', prec: 0, fall: 0 });
     S.battle = { remote: true, t: 0, over: false, tops: [mk(ON.oppG), mk(S.g)] };
+    clearBattleMeshes();
     S.meshes = [buildTopMesh(ON.oppG, COLOR_FOE), buildTopMesh(S.g, COLOR_ME)];
-    S.mode = 'battle';
+    S.mode = 'battle'; S.preview = null;
     $('launch').hidden = true;
   }
   const s = hp.s;
@@ -1320,6 +1386,7 @@ function selectTab(online) {
   $('tabCpu').setAttribute('aria-selected', String(!online));
   $('tabOnline').setAttribute('aria-selected', String(online));
   $('paneCpu').hidden = online; $('paneOnline').hidden = !online;
+  if (online) chatToBottom();
 }
 
 // 日本語入力の変換中は確定を待ってから読み取る
@@ -1378,12 +1445,20 @@ function frame(now) {
     S.idle.th += S.idle.w * dt; placeMesh(S.idleMesh, S.idle);
   }
   if (S.mode === 'launch') {
-    S.gauge += S.gaugeDir * dt * 1.1;
-    if (S.gauge > 1) { S.gauge = 1; S.gaugeDir = -1; }
-    if (S.gauge < 0) { S.gauge = 0; S.gaugeDir = 1; }
-    $('gaugeFill').style.width = (S.gauge * 100) + '%';
+    if (S.stage === 'power') {
+      S.gauge += S.gaugeDir * dt * 1.1;
+      if (S.gauge > 1) { S.gauge = 1; S.gaugeDir = -1; }
+      if (S.gauge < 0) { S.gauge = 0; S.gaugeDir = 1; }
+      $('gaugeFill').style.width = (S.gauge * 100) + '%';
+    }
+    if (S.stage === 'aim') {
+      S.aim = (S.aim + dt * 2.4) % (Math.PI * 2);   // 約2.6秒で1周
+      const mine = STARTS[S.myIdx];
+      placeArrow(mine[0], mine[1], S.aim);
+    }
+    if (S.preview) S.preview.forEach((t, i) => { t.th += t.w * dt; if (S.meshes[i]) placeMesh(S.meshes[i], t); });
     // オンラインでは放置で相手を待たせないよう、12秒で自動的に打つ
-    if (S.kind === 'online' && ON.myShot == null && now - S.launchAt > 12000) shoot();
+    if (S.kind === 'online' && ON.myShot == null && now - S.launchAt > 12000) { shoot(); shoot(); }
   }
   if ((S.mode === 'battle' || S.mode === 'result') && S.battle) {
     const B = S.battle;
