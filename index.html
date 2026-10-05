@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>文字ゴマ道場</title>
 <meta name="description" content="入力した一文字がそのまま3Dのコマになる対戦ゲーム">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -54,6 +59,7 @@ button { cursor: pointer; }
   border: 1px solid var(--line); border-radius: 4px; color: var(--paper);
 }
 #charInput:focus { border-color: var(--brass); outline: none; }
+#charInput.multi { font-size: 20px; text-align: left; padding: 0 8px; }
 #preview { width: 92px; height: 92px; background: var(--ink); border-radius: 4px; border: 1px solid var(--line); }
 .stats { display: grid; gap: 7px; min-width: 0; }
 .stat { display: grid; grid-template-columns: 2.6em 1fr 2.2em; gap: 8px; align-items: center; font-size: 13px; }
@@ -138,10 +144,13 @@ button { cursor: pointer; }
   .pick { grid-template-columns: 72px 1fr; gap: 12px; }
   #charInput, #preview { width: 72px; height: 72px; }
   #charInput { font-size: 44px; }
+  #charInput.multi { font-size: 18px; }
   .brand h1 { font-size: 20px; }
 }
 @media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
 </style>
+</head>
+<body>
 
 <div id="arena">
 <canvas id="stage" aria-label="対戦スタジアム"></canvas>
@@ -239,6 +248,7 @@ button { cursor: pointer; }
 </section>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
 <script>
 (() => {
 'use strict';
@@ -739,7 +749,8 @@ async function refreshGlyph() {
   const ch = Array.from(raw)[0] || '';
   const token = ++glyphToken;
   if (!ch) { $('msg').textContent = '文字を一つ入力してください。'; S.g = null; updateButtons(); return; }
-  if (Array.from(raw).length > 1) $('charInput').value = ch;
+  // 2文字以上入力されても欄の中身は変えず、1文字目をコマにする（日本語の変換途中を壊さないため）
+  fitCharInput();
   await ensureFont(fontById(S.font), ch);
   if (token !== glyphToken) return;
   const g = analyzeGlyph(ch, S.font);
@@ -747,13 +758,17 @@ async function refreshGlyph() {
     $('msg').textContent = 'この文字は形がほとんどないため、コマにできません。';
     S.g = null; updateButtons(); return;
   }
-  $('msg').textContent = '';
+  $('msg').textContent = Array.from(raw).length > 1 ? `1文字目の「${ch}」をコマにします。` : '';
   if (ch !== S.ch) S.streak = 0;
   S.ch = ch; S.g = g; store.set('mg.ch', ch);
   drawPreview(g); showStats(g); showStreak();
   setIdle(g);
   if (ON.R) ON.R.presence({ ch: S.ch, font: S.font }).catch(() => {});
   updateButtons();
+}
+function fitCharInput() {
+  const n = Array.from($('charInput').value).length;
+  $('charInput').classList.toggle('multi', n > 1);
 }
 function cssFamily(id) { return fontById(id).css.replace(/^\d+\s+\{S\}px\s+/, ''); }
 function setGlyphEl(el, ch, fontId) {
@@ -898,25 +913,105 @@ const cleanFont = v => FONTS.some(f => f.id === v) ? v : null;
 
 function onMsg(t) { $('onMsg').textContent = t; $('onMsg').hidden = !t; }
 
+// claude.ai の外（GitHub Pages など）では PeerJS でブラウザどうしを直接つなぐ。
+// ゲーム側からは claude.ai の room と同じ形（join / presence / peers / onPeers / leave）に見えるようにする。
+// 合図のやりとりには PeerJS の無料公開サーバー、つながりにくい回線では PeerJS の中継（TURN）サーバーが使われる。
+function peerRoomAdapter() {
+  if (typeof window.Peer !== 'function') return null;
+  const opts = window.__PEER_OPTS || {};
+  return {
+    join(name, role) {
+      return new Promise((resolve, reject) => {
+        const hostId = 'mojigoma-' + name;
+        const peer = role === 'host' ? new Peer(hostId, opts) : new Peer(opts);
+        const conns = new Map(), remote = new Map(), handlers = new Set();
+        let pres = {}, snap = null, queued = false, settled = false, myId = null;
+        const fail = code => { if (!settled) { settled = true; try { peer.destroy(); } catch (e) {} reject({ code }); } };
+        const notify = () => {
+          snap = null;
+          if (queued) return; queued = true;
+          requestAnimationFrame(() => { queued = false; const ps = R.peers(); handlers.forEach(h => h({ peers: ps, joined: [], left: [], updated: [] })); });
+        };
+        const send = c => { try { if (c.open) c.send({ t: 'p', p: pres }); } catch (e) { /* 切れかけの接続は無視 */ } };
+        const attach = c => {
+          c.on('open', () => { conns.set(c.peer, c); send(c); notify(); if (role === 'guest' && !settled) { settled = true; resolve(R); } });
+          c.on('data', d => {
+            if (!d || d.t !== 'p' || typeof d.p !== 'object' || d.p === null || Array.isArray(d.p)) return;
+            if (JSON.stringify(d.p).length > 8192) return;
+            remote.set(c.peer, Object.freeze({ ...d.p })); notify();
+          });
+          const drop = () => { conns.delete(c.peer); remote.delete(c.peer); notify(); };
+          c.on('close', drop); c.on('error', drop);
+        };
+        const R = {
+          name,
+          presence(patch) {
+            pres = { ...pres };
+            for (const [k, v] of Object.entries(patch)) { if (v === null) delete pres[k]; else pres[k] = v; }
+            conns.forEach(send); notify();
+            return Promise.resolve();
+          },
+          peers() {
+            if (snap) return snap;
+            return (snap = Object.freeze([
+              { peer: myId, sameTab: true, isMe: true, kind: 'viewer', by: null, guest: false, presence: pres, updatedAt: Date.now() },
+              ...[...conns.keys()].map(id => ({ peer: id, sameTab: false, isMe: false, kind: 'viewer', by: null, guest: false, presence: remote.get(id) || {}, updatedAt: Date.now() })),
+            ]));
+          },
+          onPeers(h) { handlers.add(h); notify(); return () => handlers.delete(h); },
+          leave() { try { peer.destroy(); } catch (e) {} return Promise.resolve(); },
+        };
+        peer.on('open', id => {
+          myId = id; snap = null;
+          if (role === 'host') { settled = true; resolve(R); }
+          else attach(peer.connect(hostId, { reliable: true, serialization: 'json' }));
+        });
+        // 合図用サーバーとの接続が切れても、新しい参加者を受け付けられるようにつなぎ直す
+        peer.on('disconnected', () => { try { if (!peer.destroyed) peer.reconnect(); } catch (e) {} });
+        peer.on('connection', c => { if (role === 'host') attach(c); else c.close(); });
+        peer.on('error', e => {
+          const t = e && e.type;
+          console.warn('PeerJS:', t, e && e.message);
+          if (t === 'unavailable-id') fail('taken');
+          else if (t === 'peer-unavailable') fail('no_room');
+          else if (!settled) fail(t === 'browser-incompatible' ? 'unsupported' : 'network');
+        });
+        setTimeout(() => fail('timeout'), 15000);
+      });
+    },
+  };
+}
+
 async function initRoom() {
   try { ON.room = (window.claude && window.claude.use) ? await window.claude.use('room') : null; }
   catch (e) { ON.room = null; }
-  if (!ON.room) {
-    onMsg('オンライン対戦は、claude.ai にサインインしてこのページを開いたときに使えます。');
-  } else onMsg('');
+  if (!ON.room) { ON.room = peerRoomAdapter(); ON.p2p = !!ON.room; }
+  if (!ON.room) onMsg('この環境ではオンライン対戦を使えません。');
+  else onMsg('');
   updateButtons();
 }
 
 async function enterRoom(code, role) {
-  if (!ON.room || ON.R) return;
+  if (!ON.room || ON.R || (ON.joining && !ON.retry)) return;
+  ON.joining = true; updateButtons();
   onMsg('ルームに入っています…');
+  try { await joinRoom(code, role); } finally { ON.joining = false; updateButtons(); }
+}
+
+async function joinRoom(code, role) {
   try {
-    ON.R = await ON.room.join('mg-' + code.toLowerCase());
+    ON.R = await ON.room.join('mg-' + code.toLowerCase(), role);
   } catch (e) {
-    onMsg(e && e.code === 'limit_reached' ? 'いまはルームを開けません。少し待ってからもう一度試してください。'
+    const c = e && e.code;
+    if (c === 'taken' && role === 'host' && (ON.retry = (ON.retry || 0) + 1) < 4) return joinRoom(makeCode(), role);
+    ON.retry = 0;
+    onMsg(c === 'no_room' ? 'このルーム番号の部屋が見つかりません。番号を確かめるか、相手がルームを開くのを待ってください。'
+      : c === 'limit_reached' ? 'いまはルームを開けません。少し待ってからもう一度試してください。'
+      : c === 'unsupported' ? 'このブラウザはオンライン対戦に対応していません。'
       : 'ルームに入れませんでした。通信状態を確かめて、もう一度試してください。');
     return;
   }
+  ON.retry = 0;
   Object.assign(ON, { role, code, ready: false, m: 0, phase: 'lobby', myShot: null, opp: null, oppPeer: null,
     oppCh: null, oppFont: null, oppG: null, oppKey: '', rec: { w: 0, l: 0 }, hitSeq: 0, seenHit: 0, hits: [], full: false,
     joinedAt: performance.now() });
@@ -1091,8 +1186,8 @@ function applySnap(s) {
 
 function updateButtons() {
   $('start').disabled = !S.g || !!ON.R;
-  $('mkRoom').disabled = !ON.room || !S.g;
-  $('joinRoom').disabled = !ON.room || !S.g;
+  $('mkRoom').disabled = !ON.room || !S.g || !!ON.joining;
+  $('joinRoom').disabled = !ON.room || !S.g || !!ON.joining;
   updateRoomUI();
 }
 
@@ -1130,7 +1225,9 @@ function selectTab(online) {
   $('paneCpu').hidden = online; $('paneOnline').hidden = !online;
 }
 
-$('charInput').addEventListener('input', () => refreshGlyph());
+// 日本語入力の変換中は確定を待ってから読み取る
+$('charInput').addEventListener('input', e => { fitCharInput(); if (!e.isComposing) refreshGlyph(); });
+$('charInput').addEventListener('compositionend', () => refreshGlyph());
 $('charInput').addEventListener('focus', e => e.target.select());
 $('reroll').addEventListener('click', () => rerollFoe());
 $('start').addEventListener('click', startCpu);
@@ -1218,3 +1315,5 @@ initRoom();
 Promise.all([rerollFoe(), refreshGlyph()]).then(() => requestAnimationFrame(frame));
 })();
 </script>
+</body>
+</html>
