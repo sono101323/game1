@@ -262,7 +262,7 @@ button { cursor: pointer; }
     </div>
   </div>
   <div class="shape">
-    <span class="label">形を変える（上下左右に倒す・回す）</span>
+    <span class="label">形を変える（上下左右に倒す・回す・反転する）</span>
     <div class="fonts" role="group" aria-label="文字の形" id="shapeBtns">
       <button class="chip" type="button" data-xf="up" aria-label="上に倒す">↑</button>
       <button class="chip" type="button" data-xf="down" aria-label="下に倒す">↓</button>
@@ -270,6 +270,8 @@ button { cursor: pointer; }
       <button class="chip" type="button" data-xf="right" aria-label="右に倒す">→</button>
       <button class="chip" type="button" data-xf="ccw" aria-label="左に90度回す">⟲</button>
       <button class="chip" type="button" data-xf="cw" aria-label="右に90度回す">⟳</button>
+      <button class="chip" type="button" data-xf="flipv" aria-label="上下反転">⇅ 上下反転</button>
+      <button class="chip" type="button" data-xf="fliph" aria-label="左右反転">⇆ 左右反転</button>
       <button class="chip" type="button" data-xf="reset">戻す</button>
     </div>
     <p class="note" id="shapeDesc">そのまま</p>
@@ -391,6 +393,14 @@ function tiltCanvas(src, deg, vertical) {
   }
   return out;
 }
+// 鏡に映したように反転する（fx：左右、fy：上下）
+function flipCanvas(src, fx, fy) {
+  if (!fx && !fy) return src;
+  const out = document.createElement('canvas'); out.width = out.height = TEX;
+  const o = out.getContext('2d');
+  o.translate(fx ? TEX : 0, fy ? TEX : 0); o.scale(fx ? -1 : 1, fy ? -1 : 1); o.drawImage(src, 0, 0);
+  return out;
+}
 function turnCanvas(src, quarter) {
   if (!quarter) return src;
   const out = document.createElement('canvas'); out.width = out.height = TEX;
@@ -398,9 +408,9 @@ function turnCanvas(src, quarter) {
   o.translate(TEX / 2, TEX / 2); o.rotate(quarter * Math.PI / 2); o.drawImage(src, -TEX / 2, -TEX / 2);
   return out;
 }
-const XF0 = { rx: 0, ry: 0, rz: 0 };
-const xfKey = xf => `${xf.rx},${xf.ry},${xf.rz}`;
-// xf：{ rx：上下に倒す角度, ry：左右に倒す角度, rz：90度単位の回転 }
+const XF0 = { rx: 0, ry: 0, rz: 0, fx: false, fy: false };
+const xfKey = xf => `${xf.rx},${xf.ry},${xf.rz},${xf.fx ? 1 : 0},${xf.fy ? 1 : 0}`;
+// xf：{ rx：上下に倒す角度, ry：左右に倒す角度, rz：90度単位の回転, fx：左右反転, fy：上下反転 }
 function analyzeGlyph(ch, fontId, xf = XF0) {
   const font = fontById(fontId);
   const c0 = document.createElement('canvas'); c0.width = c0.height = TEX;
@@ -415,7 +425,7 @@ function analyzeGlyph(ch, fontId, xf = XF0) {
   const ox = TEX / 2 - (R - L) / 2, oy = TEX / 2 + (A - D) / 2;
   x.fillStyle = '#fff';
   x.fillText(ch, ox, oy);
-  const c = turnCanvas(tiltCanvas(tiltCanvas(c0, xf.rx, true), xf.ry, false), xf.rz);
+  const c = turnCanvas(tiltCanvas(tiltCanvas(flipCanvas(c0, xf.fx, xf.fy), xf.rx, true), xf.ry, false), xf.rz);
 
   const data = c.getContext('2d').getImageData(0, 0, TEX, TEX).data;
   const mask = new Uint8Array(N * N);
@@ -1029,7 +1039,8 @@ if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(document.g
 function cleanXf(v) {
   const st = n => (typeof n === 'number' && isFinite(n)) ? Math.max(-60, Math.min(60, Math.round(n / 15) * 15)) : 0;
   if (!v || typeof v !== 'object') return { ...XF0 };
-  return { rx: st(v.rx), ry: st(v.ry), rz: (typeof v.rz === 'number' && isFinite(v.rz)) ? ((Math.round(v.rz) % 4) + 4) % 4 : 0 };
+  return { rx: st(v.rx), ry: st(v.ry), rz: (typeof v.rz === 'number' && isFinite(v.rz)) ? ((Math.round(v.rz) % 4) + 4) % 4 : 0,
+    fx: v.fx === true, fy: v.fy === true };
 }
 const $ = id => document.getElementById(id);
 const CPU_POOL = ['〇', '山', '鬼', '米', '田', '永', '風', '龍', '卍', '口', '十', '円', '雷', '剣', '王', '火', '水', '木', '金', '土', '門', '愛', '傘', '嵐', '轟', '鬱', '一', '乙', '凸', '凹', '回', '串', 'W', 'S', '@', '★', '巴', '輪', '鑑', '黒'];
@@ -1111,6 +1122,8 @@ function shapeText(xf) {
   if (xf.ry) parts.push(`${xf.ry > 0 ? '左' : '右'}に${Math.abs(xf.ry)}°`);
   let t = parts.length ? parts.join('・') + '倒す' : '';
   if (xf.rz) t += (t ? '・' : '') + `${xf.rz * 90}°回転`;
+  if (xf.fy) t += (t ? '・' : '') + '上下反転';
+  if (xf.fx) t += (t ? '・' : '') + '左右反転';
   return t || 'そのまま';
 }
 function changeShape(op) {
@@ -1118,6 +1131,7 @@ function changeShape(op) {
   if (op === 'up') xf.rx += 15; if (op === 'down') xf.rx -= 15;
   if (op === 'left') xf.ry += 15; if (op === 'right') xf.ry -= 15;
   if (op === 'cw') xf.rz += 1; if (op === 'ccw') xf.rz += 3;
+  if (op === 'flipv') xf.fy = !xf.fy; if (op === 'fliph') xf.fx = !xf.fx;
   S.xf = op === 'reset' ? { ...XF0 } : cleanXf(xf);
   store.set('mg.xf', S.xf);
   refreshGlyph();
