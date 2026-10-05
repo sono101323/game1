@@ -501,6 +501,8 @@ const POCKET_W = 0.30;  // 場外ポケットの半角（ラジアン）
 // 壁は対戦中ゆっくり回る（ポケットの位置も一緒に動く）。phase は今の回転角
 const WALL_SPEED = 0.35;   // ラジアン／秒
 const WALL = { phase: 0 };
+// 物理計算の現在時刻（衝突した時刻を記録するのに使う）
+const SIM = { t: 0 };
 const OMEGA_MIN = 7, MATCH_TIME = 60;
 const height = r => BOWL_K * r * r;
 
@@ -685,6 +687,8 @@ function collide(a, b) {
   if (b.dash > 0 && b.w < wb0) b.w = wb0 - (wb0 - b.w) * .5;
   // パッシブ「吸収回転」：ぶつかるたびに回転を最大の6%取り戻す
   for (const t of [a, b]) if (t.passive === 'drain' && j * BOOST > .4) t.w = Math.min(t.w0 * (t.boostAdd ? 1.8 : 1), t.w + t.w0 * .06);
+  // 倒した判定のため、お互いに「最後にぶつかった相手」と時刻を覚えておく
+  if (j * BOOST > .3) { a.lastHit = b; a.lastHitAt = SIM.t; b.lastHit = a; b.lastHitAt = SIM.t; }
   _hits.push({ x: cx, z: cz, j: j * BOOST });
 }
 
@@ -706,18 +710,33 @@ function newBattle(entries) {
   return { t: 0, over: false, tops, events: [] };
 }
 const SUB = 4, DT = 1 / 60 / SUB;
+const KO_WINDOW = 8;   // ぶつかってから何秒以内に倒れたら「倒した」とみなすか
 const ratio = t => t.w / t.w0;
 function stepBattle(B) {
   const T = B.tops;
   for (let s = 0; s < SUB; s++) {
-    WALL.phase = (B.t + s * DT) * WALL_SPEED;
+    SIM.t = B.t + s * DT;
+    WALL.phase = SIM.t * WALL_SPEED;
     for (const t of T) stepTop(t, DT);
     for (let i = 0; i < T.length; i++) for (let j = i + 1; j < T.length; j++) collide(T[i], T[j]);
   }
   B.t += 1 / 60;
   T.forEach((t, i) => { if (t.evt) { B.events.push([i, t.evt]); t.evt = null; } });
   if (B.over) return;
-  for (const t of T) if (t.state !== 'spin' && t.outAt == null) t.outAt = B.t;
+  for (const t of T) {
+    if (t.state === 'spin' || t.outAt != null) continue;
+    t.outAt = B.t;
+    // 倒れる前8秒以内に最後にぶつかった相手を「倒した人」とする（退出は数えない）
+    const k = t.lastHit;
+    if (t.reason !== '退出' && k && k.state === 'spin' && B.t - t.lastHitAt <= KO_WINDOW) {
+      k.kos = (k.kos || 0) + 1;
+      if (k.passive === 'hunter') {
+        // パッシブ「ハンター」：スタミナを2割回復（最大まで）
+        k.w = Math.min(Math.max(k.w0, k.w), k.w + (k.w0 - OMEGA_MIN) * .2);
+        B.events.push([T.indexOf(k), 'hunter']);
+      }
+    }
+  }
   const alive = T.filter(t => t.state === 'spin');
   let win = null;
   if (alive.length <= 1) {
@@ -775,6 +794,7 @@ const PASSIVES = {
   guts:    { name: '根性',       desc: '場外以外で倒れるとき、1回だけスタミナ1割で踏みとどまる' },
   heavy:   { name: '重装',       desc: '重さが1.3倍になるかわりに、最初の回転が1割少なく、減りも少し速い' },
   rubber:  { name: 'ゴム壁',     desc: '壁に当たっても回転を失わず、強く跳ね返り、回転を少し取り戻す。ポケットに入っても落ちにくい' },
+  hunter:  { name: 'ハンター',   desc: '相手を倒すたびにスタミナを2割回復する（最後にぶつかった人が倒したことになる。8秒以内）' },
   comeback:{ name: '逆境',       desc: 'スタミナが5割を切ると、ぶつけた相手を2倍強く弾き、受ける衝撃は3分の2、回転の減りも7割になる' },
 };
 const PASSIVE_IDS = Object.keys(PASSIVES);
@@ -1628,7 +1648,7 @@ const ON = {
 };
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 // 通信の取り決めの版。ページを更新して中身が変わったら上げる（版が違う人どうしは試合を始められない）
-const PROTO = 4;
+const PROTO = 5;
 
 // ほかの人から届く値はすべて信用せず、型と範囲を確かめてから使う
 const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
