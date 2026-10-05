@@ -61,6 +61,8 @@ button { cursor: pointer; }
 @media (min-width: 1100px) {
   body:not(.playing) #arena { left: 772px; }
 }
+.soundbtn { font-size: 12px; padding: 3px 10px; }
+.soundbtn[aria-pressed="false"] { color: var(--muted); }
 .brand { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .brand h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 24px; letter-spacing: .04em; }
 .brand small { color: var(--muted); font-size: 12px; }
@@ -229,7 +231,7 @@ button { cursor: pointer; }
 </div>
 <div class="toast" id="toast" hidden></div>
 <div class="skillbar" id="skillBar" hidden>
-  <button class="go" id="skillBtn" type="button">スキル</button>
+  <button class="go" id="skillBtn" type="button">アビリティ</button>
 </div>
 
 <div class="launch" id="launch" hidden>
@@ -256,7 +258,7 @@ button { cursor: pointer; }
 
 <section class="sheet" id="setup" aria-label="コマの設定">
   <div class="col">
-  <div class="brand"><h1>文字ゴマ道場</h1><small>一文字で回せ</small></div>
+  <div class="brand"><h1>文字ゴマ道場</h1><button class="ghost soundbtn" id="soundBtn" type="button" aria-pressed="true">音 ON</button></div>
   <div class="pick">
     <div class="charbox">
       <label class="label" for="charInput">文字</label>
@@ -289,13 +291,13 @@ button { cursor: pointer; }
   </div>
   <div class="fonts" role="group" aria-label="書体" id="fonts"></div>
   <div class="skillpick">
-    <span class="label">スキル（1つ選んで、対戦中にボタンで使う）</span>
-    <div class="fonts" id="skills" role="group" aria-label="スキル"></div>
+    <span class="label">アビリティ（1つ選んで、対戦中にボタンで使う）</span>
+    <div class="fonts" id="skills" role="group" aria-label="アビリティ"></div>
     <p class="note" id="skillDesc"></p>
   </div>
   <div class="skillpick">
-    <span class="label">パッシブ（ボタン不要。条件がそろうと自動で働く）</span>
-    <div class="fonts" id="passives" role="group" aria-label="パッシブスキル"></div>
+    <span class="label">パッシブアビリティ（ボタン不要。条件がそろうと自動で働く）</span>
+    <div class="fonts" id="passives" role="group" aria-label="パッシブアビリティ"></div>
     <p class="note" id="passiveDesc"></p>
   </div>
   <p class="msg" id="msg" role="status"></p>
@@ -767,7 +769,7 @@ function stepBattle(B) {
 }
 const reasonCode = text => text === '場外' ? 'out' : text === 'スピンアウト' ? 'spin' : text === '退出' ? 'left' : 'time';
 
-// ───────── スキル ─────────
+// ───────── アビリティ（アクティブ） ─────────
 // 対戦前に1つ選んで装備し、対戦中に使う。cd はクールダウン（秒）、uses は1試合で使える回数
 const SKILLS = {
   dash:   { name: 'ダッシュ',     desc: 'いちばん近い相手に突進し、1.5秒間ぶつかる力が2倍・受ける衝撃が6割5分になり、ぶつかって減る回転も半分になる', cd: 4 },
@@ -785,10 +787,10 @@ const SKILL_IDS = Object.keys(SKILLS);
 const EFFECT_FOREVER = 99;
 const effectLeft = t => ({ dash: t.dash, guard: t.guard, boost: t.boost, steer: t.steer, hyper: t.hyper > 0 ? EFFECT_FOREVER : 0 }[t.skill] || 0);
 
-// ───────── パッシブスキル ─────────
+// ───────── パッシブアビリティ ─────────
 // 対戦前に1つ選ぶ。ボタンは不要で、条件がそろうと自動で働く
 const PASSIVES = {
-  none:    { name: 'なし',       desc: 'パッシブスキルを使わない' },
+  none:    { name: 'なし',       desc: 'パッシブアビリティを使わない' },
   revive:  { name: 'リスポーン', desc: '1回だけ、場外に落ちても落ちる前と同じ回転のまま中央に戻る' },
   drain:   { name: '吸収回転',   desc: '回転の減りが1.6倍速くなるかわりに、ぶつかるたびに回転を取り戻す' },
   guts:    { name: '根性',       desc: '場外以外で倒れるとき、1回だけスタミナ1割で踏みとどまる' },
@@ -1043,9 +1045,42 @@ function placeArrow(x, z, angle) {
 
 // 効果音（最初の操作のあとにだけ鳴らせる）
 let audio = null;
-function initAudio() { if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audio = null; } } }
+function initAudio() {
+  if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audio = null; } }
+  if (audio && audio.state === 'suspended') audio.resume().catch(() => {});
+  if (audio) loadSfx();
+}
+
+// ───────── 効果音 ─────────
+// 音源は sounds/ フォルダの mp3（uisfx の CC0 音源。出典は sounds/README.md）。
+// 最初の操作のあとで読み込み、Web Audio で鳴らす（重ねて鳴らせ、遅れが少ない）
+const SFX_NAMES = ['press', 'ready-on', 'ready-off', 'join', 'leave', 'chat-in', 'chat-out', 'power-lock', 'launch', 'hit-big',
+  'ability', 'hyper', 'ability-ready', 'passive', 'ko', 'ringout', 'spinout', 'win', 'lose'];
+const SFX = { buf: {}, loading: false, on: true, last: {} };
+try { SFX.on = localStorage.getItem('mg.sound') !== '0'; } catch (e) { /* 既定は ON */ }
+if (window.__mg) window.__mg.sfx = SFX;   // 動作確認用
+function loadSfx() {
+  if (SFX.loading || !audio) return;
+  SFX.loading = true;
+  for (const n of SFX_NAMES) {
+    fetch(`sounds/${n}.mp3`).then(r => r.ok ? r.arrayBuffer() : Promise.reject())
+      .then(b => new Promise((ok, ng) => audio.decodeAudioData(b, ok, ng)))
+      .then(buf => { SFX.buf[n] = buf; }).catch(() => { /* 読めない音は鳴らさない */ });
+  }
+}
+// name の音を鳴らす。gap ミリ秒以内の連続は1回にまとめる（衝突音などが鳴りすぎないように）
+function sfx(name, vol = .6, gap = 40) {
+  if (!SFX.on || !audio || !SFX.buf[name]) return;
+  const now = performance.now();
+  if (now - (SFX.last[name] || 0) < gap) return;
+  SFX.last[name] = now;
+  const src = audio.createBufferSource(), g = audio.createGain();
+  src.buffer = SFX.buf[name]; g.gain.value = vol;
+  src.connect(g).connect(audio.destination); src.start();
+}
 function clink(power) {
-  if (!audio) return;
+  if (!audio || !SFX.on) return;
+  if (power > 3) sfx('hit-big', Math.min(.8, .25 + power * .06), 90);
   const t = audio.currentTime, o = audio.createOscillator(), gn = audio.createGain();
   o.type = 'triangle'; o.frequency.setValueAtTime(900 + Math.random() * 600, t);
   o.frequency.exponentialRampToValueAtTime(220, t + .12);
@@ -1373,7 +1408,8 @@ function cpuAim(i, n) {
 function startBattleMeshes() {
   clearBattleMeshes();
   S.meshes = S.players.map(p => buildTopMesh(p.g, p.color));
-  S.mode = 'battle'; S.preview = null; S.aiAt = 0; S.skillLabel = '';
+  S.mode = 'battle'; S.preview = null; S.aiAt = 0; S.skillLabel = ''; S.skillOff = true;
+  sfx('launch', .5, 400);
   $('launch').hidden = true;
   $('skillBar').hidden = false;
   $('skillBtn').disabled = true;
@@ -1385,6 +1421,7 @@ function startBattleMeshes() {
 function shoot() {
   if (S.mode !== 'launch') return;
   if (S.stage === 'power') {
+    sfx('power-lock', .6);
     S.lockedPower = gaugePower();
     S.stage = 'aim';
     aimArrow.visible = true;
@@ -1394,6 +1431,7 @@ function shoot() {
   }
   if (S.stage !== 'aim') return;
   S.stage = 'done';
+  sfx('launch', .6, 400);
   aimArrow.visible = false;
   const p = S.lockedPower, a = Math.round(S.aim * 1000) / 1000;
   if (S.kind === 'cpu') {
@@ -1412,7 +1450,7 @@ function shoot() {
   else ON.R.presence({ shot: { m: ON.m, p, a } }).catch(() => {});
 }
 
-// ── スキル ──
+// ── アビリティ ──
 function pressSkill() {
   const B = S.battle;
   if (S.mode !== 'battle' || !B || B.over) return;
@@ -1435,6 +1473,7 @@ function showSkillToast(i, id) {
   if (!p || !def) return;
   el.hidden = true;
   el.textContent = `${p.name || p.ch}　${def.name}！`;
+  sfx(SKILLS[id] ? (id === 'hyper' ? 'hyper' : 'ability') : id === 'hunter' ? 'ko' : 'passive', i === S.myIdx ? .7 : .45, 60);
   el.style.color = p.css;
   void el.offsetWidth;   // アニメーションを最初から流し直す
   el.hidden = false;
@@ -1458,6 +1497,9 @@ function updateSkillBtn() {
   }
   const off = B.over || t.state !== 'spin' || cdLeft > 0 || uses <= 0;
   if (label !== S.skillLabel) { $('skillBtn').textContent = label; S.skillLabel = label; }
+  // 自分のアビリティが使えるようになった瞬間に知らせる
+  if (S.skillOff && !off && B.t > .5) sfx('ability-ready', .5, 500);
+  S.skillOff = off;
   $('skillBtn').disabled = off;
 }
 
@@ -1494,6 +1536,7 @@ function finish() {
     reason = `${wp.name ? wp.name + '（' + wp.ch + '）' : '「' + wp.ch + '」'}の勝ち。あなたは${myReasonText(B)}`;
   }
   $('verdict').textContent = verdict;
+  sfx(win ? 'win' : 'lose', .7, 500);
   $('verdict').style.color = win ? 'var(--you)' : (S.players[winIdx] ? S.players[winIdx].css : 'var(--foe)');
   $('reason').textContent = reason;
   $('skillBar').hidden = true;
@@ -1581,6 +1624,7 @@ function sendChat(e) {
   if (CHAT.mine.length > 6) CHAT.mine.shift();
   ON.R.presence({ chat: CHAT.mine.slice() }).catch(() => {});
   addChatLine('me', t);
+  sfx('chat-out', .4);
   $('chatIn').value = '';
 }
 function chatSync(others) {
@@ -1589,7 +1633,7 @@ function chatSync(others) {
     const pr = p.presence || {};
     const ch = cleanName(pr.name) || '名無し';
     now.add(p.peer);
-    if (!CHAT.known.has(p.peer)) addChatLine('sys', `${ch} さんが入室しました`);
+    if (!CHAT.known.has(p.peer)) { addChatLine('sys', `${ch} さんが入室しました`); sfx('join', .5, 300); }
     CHAT.known.set(p.peer, ch);
     const arr = pr.chat;
     if (!Array.isArray(arr)) continue;
@@ -1600,12 +1644,12 @@ function chatSync(others) {
       if (i <= seen) continue;
       seen = i;
       const t = cleanText(m[1]);
-      if (t) addChatLine('opp', t, ch, colorForPeer(p.peer));
+      if (t) { addChatLine('opp', t, ch, colorForPeer(p.peer)); sfx('chat-in', .5, 150); }
     }
     CHAT.seen.set(p.peer, seen);
   }
   for (const [peer, ch] of CHAT.known) {
-    if (!now.has(peer)) { addChatLine('sys', `${ch} さんが退出しました`); CHAT.known.delete(peer); CHAT.seen.delete(peer); }
+    if (!now.has(peer)) { sfx('leave', .5, 300); addChatLine('sys', `${ch} さんが退出しました`); CHAT.known.delete(peer); CHAT.seen.delete(peer); }
   }
 }
 // 対戦中はスタジアムの上（HUD のすぐ下）へ、待機中はルームの欄へチャットを移す
@@ -1809,6 +1853,7 @@ async function joinRoom(code, role) {
     return;
   }
   ON.retry = 0;
+  sfx('join', .6);
   Object.assign(ON, { role, code, ready: false, m: 0, phase: 'lobby', players: [], gone: new Set(), myShot: null,
     hostPeer: null, seats: [], members: [], rec: { w: 0, l: 0 }, hitSeq: 0, seenHit: 0, evSeq: 0, seenEv: 0,
     hits: [], evs: [], skLast: new Map(), full: false });
@@ -2157,6 +2202,7 @@ function sendDeck() {
 function setReady(v) {
   if (!ON.R) return;
   ON.ready = v;
+  sfx(v ? 'ready-on' : 'ready-off', .6);
   ON.R.presence({ ready: v, deck: v ? myDeck() : null }).catch(() => {});
   sync();
 }
@@ -2239,6 +2285,26 @@ canvas.addEventListener('pointerdown', e => {
 });
 document.querySelectorAll('#shapeBtns .chip').forEach(b => b.addEventListener('click', () => changeShape(b.dataset.xf)));
 
+// ボタンを押したときの音（専用の音があるボタンは除く）。最初の操作で音の準備もする
+const OWN_SOUND = new Set(['readyBtn', 'shoot', 'skillBtn', 'chatSend', 'soundBtn']);
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('button');
+  if (!b || b.disabled) return;
+  initAudio();
+  if (!OWN_SOUND.has(b.id)) sfx('press', .35, 30);
+}, true);
+function renderSoundBtn() {
+  $('soundBtn').textContent = SFX.on ? '音 ON' : '音 OFF';
+  $('soundBtn').setAttribute('aria-pressed', String(SFX.on));
+}
+$('soundBtn').addEventListener('click', () => {
+  SFX.on = !SFX.on;
+  try { localStorage.setItem('mg.sound', SFX.on ? '1' : '0'); } catch (e) { /* 保存できなくても続ける */ }
+  renderSoundBtn();
+  sfx('press', .4);
+});
+renderSoundBtn();
+
 // スペースキー：発射中は強さ・角度の決定、対戦中はスキル（文字の入力中は反応しない）
 window.addEventListener('keydown', e => {
   const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
@@ -2299,7 +2365,11 @@ function frame(now) {
       if (S.kind === 'online' && ON.R && ON.role === 'host' && ON.skPend.size && !B.over) hostTick();
       if (S.kind === 'online' && ON.R && ON.role === 'host' && (!B.over || B.t - B.overAt < 3.5)) hostSend(now);
     }
-    B.tops.forEach((t, i) => { if (S.meshes[i]) placeMesh(S.meshes[i], t); });
+    B.tops.forEach((t, i) => {
+      if (S.meshes[i]) placeMesh(S.meshes[i], t);
+      if (t.prevState === 'spin' && t.state !== 'spin' && t.reason !== '退出') sfx(t.state === 'out' ? 'ringout' : 'spinout', i === S.myIdx ? .75 : .5, 80);
+      t.prevState = t.state;
+    });
     B.tops.forEach((t, i) => {
       const h = S.hud[i];
       if (!h) return;
