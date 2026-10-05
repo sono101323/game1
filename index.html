@@ -584,7 +584,7 @@ function stepTop(t, dt) {
 
   // パッシブ「吸収回転」は回転の減りが1.6倍、「重装」は1.1倍
   const drainK = t.passive === 'drain' ? 1.6 : t.passive === 'heavy' ? 1.1 : 1;
-  if (!hyper) t.w -= spinDecayRate(t.g, t.w) * drainK * dt;   // ハイパー無敵中は回転が減らない（持久が最大）
+  t.w -= spinDecayRate(t.g, t.w) * drainK * dt;   // ハイパー無敵中も回転は自然に減っていく
   t.th += t.w * dt;
   if (t.w < OMEGA_MIN) {
     if (t.passive === 'guts' && !t.gutsUsed) {
@@ -729,7 +729,7 @@ const SKILLS = {
   center: { name: '中央復帰',     desc: 'スタジアムの中央へ向きを変えて場外を防ぐ', uses: 3 },
   boost:  { name: 'スピンブースト', desc: '4秒間、回転の速さを大きく上げる。切れると上乗せ分が戻る', cd: 12 },
   steer:  { name: '操縦',         desc: '5秒間、スタジアムをタップ（クリック）した場所へ向きを変えられる', cd: 14 },
-  hyper:  { name: 'ハイパー無敵', desc: '発動すると試合終了まで、重さ・攻撃・持久・安定がすべて最大になり、場外にもならない', uses: 1, after: 8 },
+  hyper:  { name: 'ハイパー無敵', desc: '発動すると試合終了まで、重さ・攻撃・安定が最大になり、ぶつかっても回転が減らず、場外にもならない（回転は自然に減っていく）', uses: 1, after: 8 },
 };
 const SKILL_IDS = Object.keys(SKILLS);
 // 効果が続くスキルの残り時間（秒）。効果のないスキルは0
