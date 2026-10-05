@@ -1,0 +1,814 @@
+<title>文字ゴマ道場</title>
+<meta name="description" content="入力した一文字がそのまま3Dのコマになる対戦ゲーム">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Noto+Sans+JP:wght@900&family=Noto+Serif+JP:wght@900&family=Yuji+Syuku&family=Zen+Kaku+Gothic+New:wght@500;700&family=Zen+Maru+Gothic:wght@900&display=swap">
+<style>
+/* Layout: 全画面の3Dスタジアム。設定は左上（スマホでは下）に浮かぶ札、対戦中はHUDだけ残す。
+   夜の道場をイメージした一色の世界（藍墨の地に真鍮色）で、ライト/ダーク共通。 */
+:root {
+  --ink: #10162a;         /* 地：藍墨 */
+  --panel: #1a2340;       /* 札の地 */
+  --line: #2f3b63;        /* 罫 */
+  --paper: #efe9da;       /* 文字：生成り */
+  --muted: #9aa3c0;       /* 補助文字 */
+  --brass: #d9a441;       /* アクセント：真鍮 */
+  --you: #e9724c;         /* 自分のコマ */
+  --foe: #4cb3e9;         /* 相手のコマ */
+  --font-display: "Dela Gothic One", "Hiragino Sans", "Yu Gothic", sans-serif;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--ink); color: var(--paper);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.6;
+  overflow: hidden; -webkit-tap-highlight-color: transparent;
+}
+#stage { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+.sheet {
+  position: fixed; left: 16px; top: calc(16px + env(safe-area-inset-top, 0px));
+  width: min(340px, calc(100% - 32px)); max-height: calc(100% - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow-y: auto; box-sizing: border-box;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 18px; display: flex; flex-direction: column; gap: 16px;
+  backdrop-filter: blur(6px);
+}
+.brand { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.brand h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 24px; letter-spacing: .04em; }
+.brand small { color: var(--muted); font-size: 12px; }
+.label { font-size: 11px; letter-spacing: .14em; color: var(--muted); }
+
+.pick { display: grid; grid-template-columns: 92px 1fr; gap: 14px; align-items: start; }
+.charbox { display: flex; flex-direction: column; gap: 6px; }
+#charInput {
+  width: 92px; height: 92px; box-sizing: border-box; text-align: center;
+  font-size: 56px; line-height: 1; padding: 0; background: var(--ink);
+  border: 1px solid var(--line); border-radius: 4px; color: var(--paper);
+}
+#charInput:focus { border-color: var(--brass); outline: none; }
+#preview { width: 92px; height: 92px; background: var(--ink); border-radius: 4px; border: 1px solid var(--line); }
+.stats { display: grid; gap: 7px; min-width: 0; }
+.stat { display: grid; grid-template-columns: 2.6em 1fr 2.2em; gap: 8px; align-items: center; font-size: 13px; }
+.stat b { font-weight: 700; }
+.bar { height: 8px; background: var(--ink); border-radius: 2px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--brass); width: 0; transition: width .35s ease; }
+.stat span { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.raw { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.fonts { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  border: 1px solid var(--line); background: transparent; border-radius: 3px;
+  padding: 4px 10px; font-size: 13px; color: var(--paper);
+}
+.chip[aria-pressed="true"] { border-color: var(--brass); color: var(--brass); }
+
+.foe { display: flex; align-items: center; gap: 10px; }
+.foe .glyph { width: 44px; height: 44px; display: grid; place-items: center; font-size: 30px; border: 1px solid var(--line); border-radius: 4px; color: var(--foe); background: var(--ink); }
+.foe .who { flex: 1; min-width: 0; font-size: 13px; }
+.ghost { background: transparent; border: 1px solid var(--line); border-radius: 3px; padding: 4px 10px; font-size: 13px; }
+
+.go {
+  border: 0; border-radius: 4px; padding: 12px; background: var(--brass); color: var(--ink);
+  font-family: var(--font-display); font-size: 18px; letter-spacing: .1em;
+}
+.go:disabled { opacity: .4; cursor: not-allowed; }
+.msg { min-height: 1.2em; font-size: 12px; color: var(--you); margin: -8px 0 0; }
+.streak { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.hud {
+  position: fixed; left: 16px; right: 16px; top: calc(14px + env(safe-area-inset-top, 0px));
+  display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: center; pointer-events: none;
+}
+.side { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.side.r { flex-direction: row-reverse; }
+.side .g { font-size: 30px; line-height: 1; }
+.side .spin { flex: 1; height: 10px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
+.side .spin i { display: block; height: 100%; width: 100%; }
+.side.r .spin i { margin-left: auto; }
+#timer { font-family: var(--font-display); font-size: 20px; font-variant-numeric: tabular-nums; }
+
+.launch {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px)); width: min(420px, calc(100% - 32px));
+  display: grid; gap: 10px; text-align: center;
+}
+.gauge { position: relative; height: 16px; border: 1px solid var(--line); border-radius: 2px; background: color-mix(in srgb, var(--panel) 85%, transparent); overflow: hidden; }
+.gauge i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, var(--muted), var(--brass) 70%, var(--you)); }
+.gauge::after { content: ""; position: absolute; left: 88%; top: 0; bottom: 0; width: 2px; background: var(--paper); opacity: .5; }
+
+.result {
+  position: fixed; inset: 0; display: grid; place-items: center; padding: 16px;
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
+}
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 24px; width: min(320px, 100%); box-sizing: border-box; display: grid; gap: 14px; text-align: center; }
+.verdict { font-family: var(--font-display); font-size: 72px; line-height: 1; }
+.reason { color: var(--muted); font-size: 14px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row > * { flex: 1; }
+
+@media (max-width: 640px) {
+  .sheet { top: auto; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); max-height: 60%; padding: 14px; gap: 12px; }
+  .pick { grid-template-columns: 72px 1fr; gap: 12px; }
+  #charInput, #preview { width: 72px; height: 72px; }
+  #charInput { font-size: 44px; }
+  .brand h1 { font-size: 20px; }
+}
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
+</style>
+
+<canvas id="stage" aria-label="対戦スタジアム"></canvas>
+
+<section class="sheet" id="setup" aria-label="コマの設定">
+  <div class="brand"><h1>文字ゴマ道場</h1><small>一文字で回せ</small></div>
+  <div class="pick">
+    <div class="charbox">
+      <label class="label" for="charInput">文字</label>
+      <input id="charInput" type="text" value="龍" autocomplete="off" spellcheck="false" inputmode="text">
+      <canvas id="preview" width="184" height="184" aria-label="形の解析（白が文字、橙の点が重心）"></canvas>
+    </div>
+    <div class="stats" id="stats">
+      <span class="label">性能</span>
+      <div class="stat"><b>重さ</b><div class="bar"><i id="b-mass"></i></div><span id="v-mass">–</span></div>
+      <div class="stat"><b>攻撃</b><div class="bar"><i id="b-atk"></i></div><span id="v-atk">–</span></div>
+      <div class="stat"><b>持久</b><div class="bar"><i id="b-sta"></i></div><span id="v-sta">–</span></div>
+      <div class="stat"><b>安定</b><div class="bar"><i id="b-bal"></i></div><span id="v-bal">–</span></div>
+      <div class="raw" id="raw">面積 –　半径 –　偏り –</div>
+    </div>
+  </div>
+  <div class="fonts" role="group" aria-label="書体" id="fonts"></div>
+  <div>
+    <div class="label">対戦相手</div>
+    <div class="foe">
+      <div class="glyph" id="foeGlyph">〇</div>
+      <div class="who" id="foeWho">CPU・丸ゴシック</div>
+      <button class="ghost" id="reroll" type="button">替える</button>
+    </div>
+  </div>
+  <p class="msg" id="msg" role="status"></p>
+  <button class="go" id="start" type="button">対戦する</button>
+  <div class="streak" id="streak">連勝 0　この文字の最高 0</div>
+</section>
+
+<div class="hud" id="hud" hidden>
+  <div class="side"><span class="g" id="hudYou" style="color:var(--you)">龍</span><div class="spin"><i id="spinYou" style="background:var(--you)"></i></div></div>
+  <div id="timer">60</div>
+  <div class="side r"><span class="g" id="hudFoe" style="color:var(--foe)">〇</span><div class="spin"><i id="spinFoe" style="background:var(--foe)"></i></div></div>
+</div>
+
+<div class="launch" id="launch" hidden>
+  <div class="label">ゲージが右端近くで止まるほど強く回ります</div>
+  <div class="gauge"><i id="gaugeFill"></i></div>
+  <button class="go" id="shoot" type="button">シュート</button>
+</div>
+
+<div class="result" id="result" hidden>
+  <div class="card" role="dialog" aria-labelledby="verdict">
+    <div class="verdict" id="verdict">勝</div>
+    <div class="reason" id="reason"></div>
+    <div class="streak" id="resStreak"></div>
+    <div class="row">
+      <button class="go" id="next" type="button">次の相手</button>
+    </div>
+    <div class="row">
+      <button class="ghost" id="again" type="button">同じ相手と再戦</button>
+      <button class="ghost" id="change" type="button">文字を変える</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+'use strict';
+
+// ───────── 書体 ─────────
+const FONTS = [
+  { id: 'gothic', name: 'ゴシック', css: '900 {S}px "Noto Sans JP", "Hiragino Sans", sans-serif', fam: 'Noto Sans JP', w: 900 },
+  { id: 'mincho', name: '明朝', css: '900 {S}px "Noto Serif JP", "Hiragino Mincho ProN", serif', fam: 'Noto Serif JP', w: 900 },
+  { id: 'maru', name: '丸ゴシック', css: '900 {S}px "Zen Maru Gothic", "Hiragino Maru Gothic ProN", sans-serif', fam: 'Zen Maru Gothic', w: 900 },
+  { id: 'pop', name: '極太', css: '400 {S}px "Dela Gothic One", "Hiragino Sans", sans-serif', fam: 'Dela Gothic One', w: 400 },
+  { id: 'brush', name: '筆', css: '400 {S}px "Yuji Syuku", "Hiragino Mincho ProN", serif', fam: 'Yuji Syuku', w: 400 },
+];
+const fontById = id => FONTS.find(f => f.id === id) || FONTS[0];
+
+async function ensureFont(font, ch) {
+  try {
+    await Promise.race([
+      document.fonts.load(`${font.w} 100px "${font.fam}"`, ch),
+      new Promise(r => setTimeout(r, 2500)),
+    ]);
+  } catch (e) { /* 代替書体で続行 */ }
+}
+
+// ───────── 形の解析 ─────────
+// 文字を256px角に描き、64×64の格子に落として物理量を求める。1格子 = 2/64 単位（コマ全体で直径2）。
+const TEX = 256, N = 64, CELL = 2 / N;
+
+function analyzeGlyph(ch, fontId) {
+  const font = fontById(fontId);
+  const c = document.createElement('canvas'); c.width = c.height = TEX;
+  const x = c.getContext('2d');
+  const size = 210;
+  x.font = font.css.replace('{S}', size);
+  x.textAlign = 'left'; x.textBaseline = 'alphabetic';
+  const m = x.measureText(ch);
+  const L = m.actualBoundingBoxLeft || 0, R = m.actualBoundingBoxRight || m.width;
+  const A = m.actualBoundingBoxAscent || size * .8, D = m.actualBoundingBoxDescent || 0;
+  // インクの外接矩形の中心を軸（芯）に合わせる
+  const ox = TEX / 2 - (R - L) / 2, oy = TEX / 2 + (A - D) / 2;
+  x.fillStyle = '#fff';
+  x.fillText(ch, ox, oy);
+
+  const data = x.getImageData(0, 0, TEX, TEX).data;
+  const mask = new Uint8Array(N * N);
+  const s = TEX / N;
+  for (let gy = 0; gy < N; gy++) for (let gx = 0; gx < N; gx++) {
+    let sum = 0;
+    for (let yy = 0; yy < s; yy += 2) for (let xx = 0; xx < s; xx += 2)
+      sum += data[((gy * s + yy) * TEX + gx * s + xx) * 4 + 3];
+    mask[gy * N + gx] = sum / ((s / 2) * (s / 2)) > 110 ? 1 : 0;
+  }
+  let cnt = 0, sx = 0, sz = 0, I = 0, maxR = 0;
+  const edge = [];
+  for (let gy = 0; gy < N; gy++) for (let gx = 0; gx < N; gx++) {
+    if (!mask[gy * N + gx]) continue;
+    const lx = (gx - N / 2 + .5) * CELL, lz = (gy - N / 2 + .5) * CELL;
+    cnt++; sx += lx; sz += lz;
+    const r2 = lx * lx + lz * lz; I += r2; maxR = Math.max(maxR, Math.sqrt(r2));
+    const nb = (gx > 0 && mask[gy * N + gx - 1]) + (gx < N - 1 && mask[gy * N + gx + 1]) +
+               (gy > 0 && mask[(gy - 1) * N + gx]) + (gy < N - 1 && mask[(gy + 1) * N + gx]);
+    if (nb < 4) edge.push(lx, lz);
+  }
+  const dA = CELL * CELL;
+  const area = cnt * dA;                       // 面積（単位²）
+  const cx = cnt ? sx / cnt : 0, cz = cnt ? sz / cnt : 0;
+  const ecc = Math.hypot(cx, cz);              // 重心のずれ
+  const mass = area;                           // 厚み・密度一定なので質量 ∝ 面積
+  const inertia = I * dA + 0.02;               // 慣性モーメント（芯の分を少し足す）
+  const round = maxR > 0 ? area / (Math.PI * maxR * maxR) : 0; // 外接円をどれだけ埋めているか
+  // 当たり判定用の輪郭点（多すぎる場合は間引く）
+  let pts = edge;
+  if (edge.length / 2 > 360) {
+    const step = Math.ceil(edge.length / 2 / 360); pts = [];
+    for (let i = 0; i < edge.length; i += 2 * step) pts.push(edge[i], edge[i + 1]);
+  }
+  return { ch, fontId, canvas: c, mask, cells: cnt, area, mass, inertia, maxR: Math.max(maxR, .2), round, ecc, cx, cz, pts: new Float32Array(pts) };
+}
+
+function insideMask(g, lx, lz) {
+  const gx = Math.floor(lx / CELL + N / 2), gy = Math.floor(lz / CELL + N / 2);
+  if (gx < 0 || gy < 0 || gx >= N || gy >= N) return false;
+  return g.mask[gy * N + gx] === 1;
+}
+
+// 画面表示用の0〜100の指標（物理計算は生の値を直接使う）
+const clamp01 = v => Math.max(0, Math.min(1, v));
+function ratings(g) {
+  return {
+    mass: Math.round(clamp01(g.mass / 1.9) * 100),
+    atk: Math.round(clamp01((1 - g.round) * 1.15 + (g.maxR - .85) * .8) * 100),
+    sta: Math.round(clamp01(1 - spinDecayRate(g, 45) / 2.4) * 100),
+    bal: Math.round(clamp01(1 - g.ecc / .18) * 100),
+  };
+}
+
+// ───────── 物理 ─────────
+const ARENA_R = 5.5, BOWL_K = 0.045, G = 9.8;
+const POCKETS = [Math.PI / 2, Math.PI / 2 + 2.094, Math.PI / 2 + 4.189];
+const POCKET_W = 0.30;  // 場外ポケットの半角（ラジアン）
+const OMEGA_MIN = 7, MATCH_TIME = 60;
+const height = r => BOWL_K * r * r;
+
+// 回転の減り方（rad/s²）。床との摩擦は I が大きいほど効きにくく、
+// 空気抵抗は形がギザギザなほど、偏りは重心が軸から遠いほど大きい。
+function spinDecayRate(g, w) {
+  const friction = 0.16 * g.mass / g.inertia;
+  const air = (0.008 + 0.016 * (1 - g.round)) * w;
+  const wobble = 0.12 * g.ecc * w;
+  return friction + air + wobble;
+}
+
+function makeTop(g, x, z, power, side) {
+  const w0 = 34 + 30 * power;
+  // 発射の向き：中心を左回りに回り込むように
+  const r = Math.hypot(x, z) || 1;
+  const tx = -z / r, tz = x / r;
+  const sp = 2.5 + 3 * power;
+  return { g, side, x, z, vx: tx * sp - x / r * .8, vz: tz * sp - z / r * .8, th: 0, w: w0, w0,
+           state: 'spin', y: 0, tilt: 0, prec: 0, fall: 0 };
+}
+
+function stepTop(t, dt) {
+  if (t.state === 'out') {
+    t.vy = (t.vy || 0) - G * dt; t.y += t.vy * dt;
+    t.x += t.vx * dt; t.z += t.vz * dt; t.th += t.w * dt;
+    return;
+  }
+  if (t.state === 'down') {
+    t.vx *= Math.exp(-4 * dt); t.vz *= Math.exp(-4 * dt);
+    t.x += t.vx * dt; t.z += t.vz * dt;
+    t.w *= Math.exp(-3 * dt); t.th += t.w * dt;
+    t.fall = Math.min(1, t.fall + dt * 2.5);
+    return;
+  }
+  const r = Math.hypot(t.x, t.z) || 1e-6;
+  const sr = clamp01(t.w / t.w0);
+  // すり鉢の傾斜で中心へ
+  let ax = -G * 2 * BOWL_K * t.x, az = -G * 2 * BOWL_K * t.z;
+  // 回転と床の摩擦で、すり鉢を周回する流れ（ギザギザな形ほど床をつかんで暴れる）
+  // 進行方向を少しずつ曲げるので、中央を何度も横切る花びら状の軌跡になる
+  const drift = (0.8 + 2.4 * (1 - t.g.round)) * sr;
+  const vs = Math.hypot(t.vx, t.vz) || 1;
+  ax += -t.vz / vs * drift; az += t.vx / vs * drift;
+  // 遅くなりすぎないよう、回転が床を蹴って進む力
+  if (vs < 2.2 * sr) { ax += t.vx / vs * 1.5 * sr; az += t.vz / vs * 1.5 * sr; }
+  // 回転が弱るとふらつく
+  const wob = (1 - sr) * (1.5 + 6 * t.g.ecc);
+  ax += Math.cos(t.th * .5) * wob; az += Math.sin(t.th * .5) * wob;
+  t.vx += ax * dt; t.vz += az * dt;
+  const damp = Math.exp(-0.6 * dt);
+  t.vx *= damp; t.vz *= damp;
+  const sp = Math.hypot(t.vx, t.vz);
+  if (sp > 14) { t.vx *= 14 / sp; t.vz *= 14 / sp; }
+  t.x += t.vx * dt; t.z += t.vz * dt;
+
+  // 壁とポケット
+  const r2 = Math.hypot(t.x, t.z);
+  const ang = Math.atan2(t.z, t.x);
+  const inPocket = POCKETS.some(p => Math.abs(Math.atan2(Math.sin(ang - p), Math.cos(ang - p))) < POCKET_W);
+  const reach = t.g.maxR * .75;
+  if (inPocket) {
+    if (r2 > ARENA_R + .15) { t.state = 'out'; t.vy = 1; t.reason = '場外'; }
+  } else if (r2 + reach > ARENA_R) {
+    const nx = t.x / r2, nz = t.z / r2;
+    const vn = t.vx * nx + t.vz * nz;
+    if (vn > 0) {
+      t.vx -= 1.65 * vn * nx; t.vz -= 1.65 * vn * nz;
+      // 壁との擦れで回転を失い、横に弾かれる
+      t.vx += -nz * t.w * .02; t.vz += nx * t.w * .02;
+      t.w -= Math.min(t.w * .06, vn * 1.2);
+      t.hitWall = vn;
+    }
+    t.x = nx * (ARENA_R - reach); t.z = nz * (ARENA_R - reach);
+  }
+
+  t.w -= spinDecayRate(t.g, t.w) * dt;
+  t.th += t.w * dt;
+  if (t.w < OMEGA_MIN) { t.state = 'down'; t.reason = 'スピンアウト'; }
+}
+
+const _hits = [];
+function collide(a, b) {
+  if (a.state !== 'spin' || b.state !== 'spin') return;
+  let dx = a.x - b.x, dz = a.z - b.z;
+  const d = Math.hypot(dx, dz);
+  if (d > a.g.maxR + b.g.maxR) return;
+  let sx = 0, sz = 0, cnt = 0;
+  const probe = (p, q) => {
+    const cp = Math.cos(p.th), sp = Math.sin(p.th), cq = Math.cos(q.th), sq = Math.sin(q.th);
+    const pts = p.g.pts;
+    for (let i = 0; i < pts.length; i += 2) {
+      const lx = pts[i], lz = pts[i + 1];
+      const wx = p.x + lx * cp + lz * sp, wz = p.z - lx * sp + lz * cp;
+      const rx = wx - q.x, rz = wz - q.z;
+      if (insideMask(q.g, rx * cq - rz * sq, rx * sq + rz * cq)) { sx += wx; sz += wz; cnt++; }
+    }
+  };
+  probe(a, b); probe(b, a);
+  if (!cnt) return;
+  const cx = sx / cnt, cz = sz / cnt;
+  let nx = d > 1e-5 ? dx / d : 1, nz = d > 1e-5 ? dz / d : 0;
+  const ma = a.g.mass, mb = b.g.mass, Ia = a.g.inertia, Ib = b.g.inertia;
+  // めり込みを少しずつ解消
+  const corr = Math.min(cnt * .0025, .06);
+  a.x += nx * corr * mb / (ma + mb); a.z += nz * corr * mb / (ma + mb);
+  b.x -= nx * corr * ma / (ma + mb); b.z -= nz * corr * ma / (ma + mb);
+
+  const rax = cx - a.x, raz = cz - a.z, rbx = cx - b.x, rbz = cz - b.z;
+  // 回転による接点の速度：ω × r（この座標系では (rz, -rx) 方向）
+  const pax = raz, paz = -rax, pbx = rbz, pbz = -rbx;
+  const vrx = (a.vx + a.w * pax) - (b.vx + b.w * pbx);
+  const vrz = (a.vz + a.w * paz) - (b.vz + b.w * pbz);
+  const vn = vrx * nx + vrz * nz;
+  if (vn >= 0) return;
+  const E = 1.0, MU = 0.6;
+  // 見栄えのため、実際の剛体衝突より強めに弾く（ゲーム的な誇張）
+  const BOOST = 1.8;
+  const pan = pax * nx + paz * nz, pbn = pbx * nx + pbz * nz;
+  const kn = 1 / ma + 1 / mb + pan * pan / Ia + pbn * pbn / Ib;
+  const j = -(1 + E) * vn / kn;
+  const tx = -nz, tz = nx;
+  const vt = vrx * tx + vrz * tz;
+  const pat = pax * tx + paz * tz, pbt = pbx * tx + pbz * tz;
+  const kt = 1 / ma + 1 / mb + pat * pat / Ia + pbt * pbt / Ib;
+  let jt = -vt / kt; jt = Math.max(-MU * j, Math.min(MU * j, jt));
+  const Jx = (nx * j + tx * jt) * BOOST, Jz = (nz * j + tz * jt) * BOOST;
+  a.vx += Jx / ma; a.vz += Jz / ma; b.vx -= Jx / mb; b.vz -= Jz / mb;
+  a.w += (pax * Jx + paz * Jz) / Ia; b.w -= (pbx * Jx + pbz * Jz) / Ib;
+  // 逆回転にはならない（ぶつかって止まるだけ）
+  a.w = Math.max(0, a.w); b.w = Math.max(0, b.w);
+  _hits.push({ x: cx, z: cz, j: j * BOOST });
+}
+
+function newBattle(gYou, gFoe, pYou, pFoe) {
+  return {
+    t: 0, over: false,
+    tops: [makeTop(gYou, -3.2, 1.2, pYou, 'you'), makeTop(gFoe, 3.2, -1.2, pFoe, 'foe')],
+  };
+}
+const SUB = 4, DT = 1 / 60 / SUB;
+function stepBattle(B) {
+  for (let s = 0; s < SUB; s++) {
+    for (const t of B.tops) stepTop(t, DT);
+    collide(B.tops[0], B.tops[1]);
+  }
+  B.t += 1 / 60;
+  if (!B.over) {
+    const [y, f] = B.tops;
+    const yDead = y.state !== 'spin', fDead = f.state !== 'spin';
+    if (yDead || fDead) {
+      B.over = true;
+      if (yDead && fDead) B.winner = (y.w / y.w0 >= f.w / f.w0) ? 'you' : 'foe';
+      else B.winner = yDead ? 'foe' : 'you';
+      B.reason = (B.winner === 'you' ? f : y).reason;
+      B.overAt = B.t;
+    } else if (B.t >= MATCH_TIME) {
+      B.over = true; B.overAt = B.t;
+      B.winner = (y.w / y.w0 >= f.w / f.w0) ? 'you' : 'foe';
+      B.reason = '時間切れ（残り回転の割合で判定）';
+    }
+  }
+}
+
+// 画面なしで最後まで回す（動作確認用）
+window.__simulate = (chA, fontA, chB, fontB, pA = .85, pB = .85) => {
+  const B = newBattle(analyzeGlyph(chA, fontA), analyzeGlyph(chB, fontB), pA, pB);
+  let vmax = 0, rmax = 0, hits = 0, jmax = 0;
+  while (!B.over) {
+    stepBattle(B);
+    for (const t of B.tops) { vmax = Math.max(vmax, Math.hypot(t.vx, t.vz)); rmax = Math.max(rmax, Math.hypot(t.x, t.z)); }
+    hits += _hits.length; for (const h of _hits) jmax = Math.max(jmax, h.j); _hits.length = 0;
+  }
+  return { winner: B.winner, reason: B.reason, t: +B.t.toFixed(1), hits, vmax: +vmax.toFixed(1), rmax: +rmax.toFixed(2), jmax: +jmax.toFixed(2) };
+};
+window.__analyze = (ch, f) => { const g = analyzeGlyph(ch, f); return { area: +g.area.toFixed(3), maxR: +g.maxR.toFixed(3), round: +g.round.toFixed(3), ecc: +g.ecc.toFixed(3), I: +g.inertia.toFixed(3), decay45: +spinDecayRate(g, 45).toFixed(3), ...ratings(g) }; };
+
+// ───────── 3D表示 ─────────
+const canvas = document.getElementById('stage');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+} catch (e) {
+  document.getElementById('msg').textContent = 'この端末では3D表示（WebGL）を使えません。';
+}
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x10162a);
+scene.fog = new THREE.Fog(0x10162a, 18, 34);
+const camera = new THREE.PerspectiveCamera(42, 1, .1, 100);
+
+scene.add(new THREE.HemisphereLight(0xcfd8ff, 0x1a1420, .75));
+const sun = new THREE.DirectionalLight(0xfff1d6, .9);
+sun.position.set(4, 10, 6); scene.add(sun);
+
+// すり鉢状のスタジアム
+(function buildArena() {
+  const prof = [];
+  for (let i = 0; i <= 24; i++) { const r = ARENA_R * i / 24; prof.push(new THREE.Vector2(r, height(r))); }
+  prof.push(new THREE.Vector2(ARENA_R + .01, height(ARENA_R)));
+  const bowl = new THREE.LatheGeometry(prof, 96);
+  const tex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 512;
+    const x = c.getContext('2d');
+    x.fillStyle = '#c9b48a'; x.fillRect(0, 0, 512, 512);
+    // 木目
+    for (let i = 0; i < 90; i++) {
+      x.strokeStyle = `rgba(90,60,30,${.04 + Math.random() * .08})`; x.lineWidth = 1 + Math.random() * 3;
+      x.beginPath(); const y0 = Math.random() * 512; x.moveTo(0, y0);
+      for (let k = 0; k <= 8; k++) x.lineTo(k * 64, y0 + Math.sin(k + i) * 6);
+      x.stroke();
+    }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 1);
+    return t;
+  })();
+  const bowlMesh = new THREE.Mesh(bowl, new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide, roughness: .85 }));
+  scene.add(bowlMesh);
+  // 中心の円と放射線（土俵の仕切り線に相当）
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x7a5a2e, transparent: true, opacity: .55 });
+  for (const rr of [1.2, 3.2]) {
+    const pts = [];
+    for (let i = 0; i <= 96; i++) { const a = i / 96 * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * rr, height(rr) + .01, Math.sin(a) * rr)); }
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
+  }
+  // 壁（ポケット部分は切れている）
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x2b375e, roughness: .5, metalness: .2 });
+  const capMat = new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: .35, metalness: .6 });
+  const segs = 3;
+  for (let s = 0; s < segs; s++) {
+    const a0 = POCKETS[s] + POCKET_W, a1 = POCKETS[(s + 1) % segs] - POCKET_W + (s === segs - 1 ? Math.PI * 2 : 0);
+    // three.js の CylinderGeometry は θ を z→x 方向に測るので、atan2(z, x) の角度から変換する
+    const geo = new THREE.CylinderGeometry(ARENA_R + .25, ARENA_R + .25, .55, 64, 1, true, Math.PI / 2 - a1, a1 - a0);
+    const wall = new THREE.Mesh(geo, wallMat); wall.material.side = THREE.DoubleSide;
+    wall.position.y = height(ARENA_R) + .2; scene.add(wall);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(ARENA_R + .25, .06, 8, 64, a1 - a0), capMat);
+    rim.rotation.x = Math.PI / 2; rim.rotation.z = a0; rim.position.y = height(ARENA_R) + .48; scene.add(rim);
+  }
+  // 床下の影
+  const under = new THREE.Mesh(new THREE.CircleGeometry(ARENA_R + 3, 64), new THREE.MeshBasicMaterial({ color: 0x0b1020 }));
+  under.rotation.x = -Math.PI / 2; under.position.y = -2.5; scene.add(under);
+})();
+
+// コマのメッシュ：文字の板を何層も重ねて厚みを出す
+function buildTopMesh(g, color) {
+  const root = new THREE.Group(), tilt = new THREE.Group(), spin = new THREE.Group();
+  root.add(tilt); tilt.add(spin);
+  const tex = new THREE.CanvasTexture(g.canvas);
+  tex.anisotropy = 4;
+  const base = new THREE.Color(color);
+  const LAYERS = 9, Y0 = .32, H = .22;
+  for (let i = 0; i < LAYERS; i++) {
+    const top = i === LAYERS - 1;
+    const c = base.clone().multiplyScalar(top ? 1.08 : .55 + .35 * i / LAYERS);
+    const mat = new THREE.MeshStandardMaterial({ map: tex, color: c, alphaTest: .5, transparent: false, side: THREE.DoubleSide, roughness: top ? .35 : .6, metalness: .15 });
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+    p.rotation.x = -Math.PI / 2; p.position.y = Y0 + H * i / (LAYERS - 1);
+    spin.add(p);
+  }
+  // 芯（軸）
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(.09, .02, .36, 16), new THREE.MeshStandardMaterial({ color: 0xd9a441, metalness: .7, roughness: .3 }));
+  shaft.position.y = .18; spin.add(shaft);
+  const knob = new THREE.Mesh(new THREE.CylinderGeometry(.07, .07, .12, 12), shaft.material);
+  knob.position.y = Y0 + H + .06; spin.add(knob);
+  scene.add(root);
+  return { root, tilt, spin, dispose() { scene.remove(root); tex.dispose(); } };
+}
+
+// 火花
+const SPARKS = 160;
+const sparkGeo = new THREE.BufferGeometry();
+const sparkPos = new Float32Array(SPARKS * 3), sparkVel = new Float32Array(SPARKS * 3), sparkLife = new Float32Array(SPARKS);
+sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+const sparkPts = new THREE.Points(sparkGeo, new THREE.PointsMaterial({ color: 0xffd27a, size: .09, transparent: true, opacity: .95, depthWrite: false }));
+scene.add(sparkPts);
+let sparkIdx = 0;
+function burst(x, y, z, n, power) {
+  for (let i = 0; i < n; i++) {
+    const k = sparkIdx++ % SPARKS;
+    sparkPos[k * 3] = x; sparkPos[k * 3 + 1] = y; sparkPos[k * 3 + 2] = z;
+    const a = Math.random() * Math.PI * 2, s = (1.5 + Math.random() * 3) * Math.min(2, .5 + power);
+    sparkVel[k * 3] = Math.cos(a) * s; sparkVel[k * 3 + 1] = 1 + Math.random() * 3; sparkVel[k * 3 + 2] = Math.sin(a) * s;
+    sparkLife[k] = .35 + Math.random() * .3;
+  }
+}
+function stepSparks(dt) {
+  for (let k = 0; k < SPARKS; k++) {
+    if (sparkLife[k] <= 0) { sparkPos[k * 3 + 1] = -99; continue; }
+    sparkLife[k] -= dt;
+    sparkVel[k * 3 + 1] -= 9 * dt;
+    for (let a = 0; a < 3; a++) sparkPos[k * 3 + a] += sparkVel[k * 3 + a] * dt;
+  }
+  sparkGeo.attributes.position.needsUpdate = true;
+}
+
+// 効果音（最初の操作のあとにだけ鳴らせる）
+let audio = null;
+function initAudio() { if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audio = null; } } }
+function clink(power) {
+  if (!audio) return;
+  const t = audio.currentTime, o = audio.createOscillator(), gn = audio.createGain();
+  o.type = 'triangle'; o.frequency.setValueAtTime(900 + Math.random() * 600, t);
+  o.frequency.exponentialRampToValueAtTime(220, t + .12);
+  gn.gain.setValueAtTime(Math.min(.25, .04 + power * .03), t); gn.gain.exponentialRampToValueAtTime(.001, t + .15);
+  o.connect(gn).connect(audio.destination); o.start(t); o.stop(t + .16);
+}
+
+function placeMesh(m, t) {
+  const r = Math.hypot(t.x, t.z);
+  m.root.position.set(t.x, height(Math.min(r, ARENA_R)) + t.y, t.z);
+  m.spin.rotation.y = t.th;
+  const sr = clamp01(t.w / t.w0);
+  t.prec += (2 + 6 * (1 - sr)) / 60;
+  let tilt = .03 + .3 * Math.pow(1 - sr, 2) + t.g.ecc * .5;
+  if (t.state === 'down') tilt = tilt + (1.25 - tilt) * t.fall;
+  m.tilt.rotation.set(Math.cos(t.prec) * tilt, 0, Math.sin(t.prec) * tilt);
+}
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  if (renderer) { renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.setSize(w, h, false); }
+  camera.aspect = w / h;
+  // スタジアム全体（直径約13）が横幅に収まる距離をとる
+  const fitH = 7.6 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const fitW = fitH / Math.min(1, camera.aspect);
+  const dist = Math.max(13, fitW * .95);
+  const narrow = w <= 640;
+  camera.position.set(0, dist * .78, dist * .62);
+  camera.lookAt(0, narrow && S.mode === 'idle' ? -dist * .17 : 0, 0);
+  scene.fog.near = dist * 1.1; scene.fog.far = dist * 2.2;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+
+// ───────── 画面と進行 ─────────
+const $ = id => document.getElementById(id);
+const CPU_POOL = ['〇', '山', '鬼', '米', '田', '永', '風', '龍', '卍', '口', '十', '円', '雷', '剣', '王', '火', '水', '木', '金', '土', '門', '愛', '傘', '嵐', '轟', '鬱', '一', '乙', '凸', '凹', '回', '串', 'W', 'S', '@', '★', '巴', '輪', '鑑', '黒'];
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* 保存できない環境では記録しない */ } },
+};
+
+const S = {
+  ch: store.get('mg.ch', '龍'), font: store.get('mg.font', 'gothic'),
+  foeCh: '〇', foeFont: 'maru',
+  g: null, foeG: null, streak: 0,
+  mode: 'idle', battle: null, meshes: [], idle: null, idleMesh: null,
+  gauge: 0, gaugeDir: 1, lastFoe: null,
+};
+$('charInput').value = S.ch;
+
+function renderFontChips() {
+  const box = $('fonts'); box.innerHTML = '';
+  for (const f of FONTS) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip'; b.textContent = f.name;
+    b.style.fontFamily = f.css.replace('{S}px', '').replace(/^\d+\s+/, '').trim();
+    b.style.fontWeight = f.w;
+    b.setAttribute('aria-pressed', String(f.id === S.font));
+    b.addEventListener('click', () => { S.font = f.id; store.set('mg.font', f.id); renderFontChips(); refreshGlyph(); });
+    box.appendChild(b);
+  }
+}
+
+function drawPreview(g) {
+  const c = $('preview'), x = c.getContext('2d'), W = c.width, cs = W / N;
+  x.clearRect(0, 0, W, W);
+  // 外接円
+  x.strokeStyle = 'rgba(154,163,192,.35)'; x.setLineDash([4, 4]);
+  x.beginPath(); x.arc(W / 2, W / 2, g.maxR / CELL * cs, 0, Math.PI * 2); x.stroke(); x.setLineDash([]);
+  x.fillStyle = '#efe9da';
+  for (let gy = 0; gy < N; gy++) for (let gx = 0; gx < N; gx++) if (g.mask[gy * N + gx]) x.fillRect(gx * cs, gy * cs, cs + .3, cs + .3);
+  // 軸（金）と重心（橙）
+  x.fillStyle = '#d9a441'; x.beginPath(); x.arc(W / 2, W / 2, 5, 0, Math.PI * 2); x.fill();
+  x.fillStyle = '#e9724c'; x.beginPath(); x.arc(W / 2 + g.cx / CELL * cs, W / 2 + g.cz / CELL * cs, 5, 0, Math.PI * 2); x.fill();
+}
+
+function showStats(g) {
+  const r = ratings(g);
+  for (const [k, v] of Object.entries(r)) { $('b-' + k).style.width = v + '%'; $('v-' + k).textContent = v; }
+  $('raw').textContent = `面積 ${(g.area / 4 * 100).toFixed(0)}%　半径 ${g.maxR.toFixed(2)}　偏り ${g.ecc.toFixed(3)}`;
+}
+
+function streakKey() { return `mg.best.${S.ch}.${S.font}`; }
+function showStreak() {
+  $('streak').textContent = `連勝 ${S.streak}　この文字・書体の最高 ${store.get(streakKey(), 0)}`;
+}
+
+let glyphToken = 0;
+async function refreshGlyph() {
+  const raw = $('charInput').value.trim();
+  const ch = Array.from(raw)[0] || '';
+  const token = ++glyphToken;
+  if (!ch) { $('msg').textContent = '文字を一つ入力してください。'; $('start').disabled = true; return; }
+  if (Array.from(raw).length > 1) $('charInput').value = ch;
+  await ensureFont(fontById(S.font), ch);
+  if (token !== glyphToken) return;
+  const g = analyzeGlyph(ch, S.font);
+  if (g.cells < 30) {
+    $('msg').textContent = 'この文字は形がほとんどないため、コマにできません。';
+    $('start').disabled = true; return;
+  }
+  $('msg').textContent = ''; $('start').disabled = false;
+  if (ch !== S.ch) S.streak = 0;
+  S.ch = ch; S.g = g; store.set('mg.ch', ch);
+  drawPreview(g); showStats(g); showStreak();
+  $('hudYou').textContent = ch; $('hudYou').style.fontFamily = cssFamily(S.font);
+  setIdle(g);
+}
+const cssFamily = id => fontById(id).css.replace(/^\d+\s+\{S\}px\s+/, '');
+
+async function rerollFoe() {
+  let ch;
+  do { ch = CPU_POOL[Math.floor(Math.random() * CPU_POOL.length)]; } while (ch === S.foeCh);
+  const f = FONTS[Math.floor(Math.random() * FONTS.length)].id;
+  S.foeCh = ch; S.foeFont = f;
+  $('foeGlyph').textContent = ch; $('foeGlyph').style.fontFamily = cssFamily(f); $('foeGlyph').style.fontWeight = fontById(f).w;
+  $('foeWho').textContent = `CPU・${fontById(f).name}`;
+  $('hudFoe').textContent = ch; $('hudFoe').style.fontFamily = cssFamily(f);
+  await ensureFont(fontById(f), ch);
+  S.foeG = analyzeGlyph(ch, f);
+}
+
+// 待機中：自分のコマを中央でゆっくり回して見せる
+function setIdle(g) {
+  if (S.mode !== 'idle') return;
+  if (S.idleMesh) S.idleMesh.dispose();
+  S.idleMesh = buildTopMesh(g, 0xe9724c);
+  S.idle = { g, x: 0, z: 0, y: 0, th: 0, w: 12, w0: 12, state: 'spin', prec: 0, fall: 0 };
+}
+
+function clearBattleMeshes() { for (const m of S.meshes) m.dispose(); S.meshes = []; }
+
+function toLaunch() {
+  initAudio();
+  if (!S.g || !S.foeG) return;
+  S.mode = 'launch'; resize();
+  if (S.idleMesh) { S.idleMesh.dispose(); S.idleMesh = null; }
+  clearBattleMeshes();
+  $('setup').hidden = true; $('result').hidden = true;
+  $('launch').hidden = false; $('hud').hidden = false;
+  $('timer').textContent = MATCH_TIME;
+  $('spinYou').style.width = '0%'; $('spinFoe').style.width = '0%';
+  S.gauge = 0; S.gaugeDir = 1;
+  $('shoot').focus();
+}
+
+function shoot() {
+  if (S.mode !== 'launch') return;
+  // ゲージは88%付近が最大。行き過ぎると弱くなる
+  const pYou = clamp01(1 - Math.abs(S.gauge - .88) / .88);
+  const pFoe = .55 + Math.random() * .4;
+  S.battle = newBattle(S.g, S.foeG, pYou, pFoe);
+  S.meshes = [buildTopMesh(S.g, 0xe9724c), buildTopMesh(S.foeG, 0x4cb3e9)];
+  S.mode = 'battle';
+  $('launch').hidden = true;
+}
+
+function finish() {
+  const B = S.battle;
+  S.mode = 'result';
+  const win = B.winner === 'you';
+  if (win) {
+    S.streak++;
+    if (S.streak > store.get(streakKey(), 0)) store.set(streakKey(), S.streak);
+  } else S.streak = 0;
+  $('verdict').textContent = win ? '勝' : '負';
+  $('verdict').style.color = win ? 'var(--you)' : 'var(--foe)';
+  $('reason').textContent = `${win ? '相手' : 'あなた'}の${B.reason}（${B.overAt.toFixed(1)}秒）`;
+  $('resStreak').textContent = `連勝 ${S.streak}　最高 ${store.get(streakKey(), 0)}`;
+  $('next').textContent = win ? '次の相手' : '新しい相手で挑む';
+  $('result').hidden = false;
+  $('next').focus();
+}
+
+function backToSetup() {
+  clearBattleMeshes();
+  S.mode = 'idle'; resize();
+  $('result').hidden = true; $('hud').hidden = true; $('launch').hidden = true; $('setup').hidden = false;
+  showStreak();
+  if (S.g) setIdle(S.g);
+}
+
+$('charInput').addEventListener('input', () => refreshGlyph());
+$('charInput').addEventListener('focus', e => e.target.select());
+$('reroll').addEventListener('click', () => rerollFoe());
+$('start').addEventListener('click', toLaunch);
+$('shoot').addEventListener('click', shoot);
+$('next').addEventListener('click', async () => { await rerollFoe(); toLaunch(); });
+$('again').addEventListener('click', toLaunch);
+$('change').addEventListener('click', backToSetup);
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space' && S.mode === 'launch') { e.preventDefault(); shoot(); }
+});
+
+// ───────── ループ ─────────
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (S.mode === 'idle' && S.idle && S.idleMesh) {
+    S.idle.th += S.idle.w * dt; placeMesh(S.idleMesh, S.idle);
+  }
+  if (S.mode === 'launch') {
+    S.gauge += S.gaugeDir * dt * 1.1;
+    if (S.gauge > 1) { S.gauge = 1; S.gaugeDir = -1; }
+    if (S.gauge < 0) { S.gauge = 0; S.gaugeDir = 1; }
+    $('gaugeFill').style.width = (S.gauge * 100) + '%';
+  }
+  if ((S.mode === 'battle' || S.mode === 'result') && S.battle) {
+    const B = S.battle;
+    if (!B.over || B.t - B.overAt < 3) stepBattle(B);
+    for (const h of _hits) { burst(h.x, .5, h.z, Math.min(14, 3 + h.j * 2), h.j); clink(h.j); }
+    _hits.length = 0;
+    B.tops.forEach((t, i) => placeMesh(S.meshes[i], t));
+    const [y, f] = B.tops;
+    $('spinYou').style.width = (clamp01(y.w / 64) * 100) + '%';
+    $('spinFoe').style.width = (clamp01(f.w / 64) * 100) + '%';
+    $('timer').textContent = Math.max(0, Math.ceil(MATCH_TIME - B.t));
+    if (S.mode === 'battle' && B.over && B.t - B.overAt > 1.2) finish();
+  }
+  stepSparks(dt);
+  if (renderer) renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+resize();
+renderFontChips();
+Promise.all([rerollFoe(), refreshGlyph()]).then(() => requestAnimationFrame(frame));
+})();
+</script>
