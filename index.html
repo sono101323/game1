@@ -64,6 +64,14 @@ button { cursor: pointer; }
 @media (min-width: 1100px) {
   body:not(.playing) #arena { left: 772px; }
 }
+.fieldtag { position: absolute; right: 16px; top: calc(14px + env(safe-area-inset-top, 0px)); max-width: min(260px, 55%);
+  display: grid; gap: 1px; padding: 7px 11px; pointer-events: none;
+  background: color-mix(in srgb, var(--panel) 86%, transparent); border: 1px solid var(--line); border-left: 3px solid var(--brass); border-radius: 6px; }
+.fieldtag b { font-size: 16px; line-height: 1.3; color: var(--paper); }
+.fieldtag small { font-size: 11px; line-height: 1.45; color: var(--dim); }
+body.playing .fieldtag { display: none; }
+#fields .opt:disabled { cursor: default; opacity: .55; }
+#fields .opt:disabled[aria-checked="true"] { opacity: 1; }
 .soundbtn { font-size: 12px; padding: 3px 10px; white-space: nowrap; }
 .soundbtn[aria-pressed="false"] { color: var(--muted); }
 .brand { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
@@ -291,6 +299,8 @@ button.mini { font-size: 11px; padding: 2px 8px; }
   body.playing #arena { height: clamp(360px, 80vh, 720px); }
   body.playing.chatdock #arena { height: clamp(340px, 66vh, 640px); }
   .hud, .launch { top: auto; }
+  .fieldtag { top: 10px; right: 10px; padding: 5px 9px; }
+  .fieldtag small { display: none; }
   .hud { top: 12px; }
   .launch { bottom: 14px; }
   .sheet { position: static; width: auto; max-height: none; margin: 12px 16px 24px; padding: 14px; gap: 12px; backdrop-filter: none; }
@@ -307,6 +317,7 @@ button.mini { font-size: 11px; padding: 2px 8px; }
 
 <div id="arena">
 <canvas id="stage" aria-label="対戦スタジアム"></canvas>
+<div class="fieldtag" id="fieldTag" aria-live="polite"><span class="label">ステージ</span><b id="fieldTagName">標準</b><small id="fieldTagDesc"></small></div>
 
 <div class="hud" id="hud" hidden>
   <div class="side" id="hudMe"><span class="g" id="hudYou" style="color:var(--you)">龍</span><div class="spin"><i id="spinYou" style="background:var(--you)"></i></div></div>
@@ -407,6 +418,11 @@ button.mini { font-size: 11px; padding: 2px 8px; }
   <p class="msg" id="msg" role="status"></p>
   </div>
   <div class="col">
+  <div class="skillpick fieldpick">
+    <div class="sechead"><span class="label">ステージ</span><span class="hint" id="fieldHint"></span></div>
+    <div class="cards" id="fields" role="radiogroup" aria-label="ステージ"></div>
+    <p class="desc" id="fieldDesc"></p>
+  </div>
   <div class="tabs" role="tablist" aria-label="対戦の種類">
     <button class="tab" id="tabCpu" role="tab" type="button" aria-selected="true">CPUと対戦</button>
     <button class="tab" id="tabOnline" role="tab" type="button" aria-selected="false">オンライン</button>
@@ -678,16 +694,25 @@ function ratings(g) {
 }
 
 // ───────── 物理 ─────────
-const ARENA_R = 5.5, BOWL_K = 0.045, G = 9.8;
-const POCKETS = [Math.PI / 2, Math.PI / 2 + 2.094, Math.PI / 2 + 4.189];
-const POCKET_W = 0.30;  // 場外ポケットの半角（ラジアン）
-// 壁は対戦中ゆっくり回る（ポケットの位置も一緒に動く）。phase は今の回転角
-const WALL_SPEED = 0.35;   // ラジアン／秒
+const G = 9.8;
+// ステージ：R は半径、k はすり鉢の深さ、pockets は場外ポケットの中心角、pw はポケットの半角（ラジアン）、
+// ws は壁の回る速さ（ラジアン／秒。負なら逆向き）、pillar は中央の柱の半径（0なら柱なし）
+// 壁は対戦中に回る（ポケットの位置も一緒に動く）
+const pocketsOf = n => Array.from({ length: n }, (_, i) => Math.PI / 2 + i * Math.PI * 2 / n);
+const FIELDS = {
+  std:    { name: '標準',     tag: '3穴',     desc: 'すり鉢に3つのポケット。壁はゆっくり回る', R: 5.5, k: .045, pockets: pocketsOf(3), pw: .30, ws: .35, pillar: 0 },
+  wide:   { name: '大皿',     tag: '広い・4穴', desc: '広くて浅い。4つのポケットは狭く、壁もゆっくり。長期戦になりやすい', R: 7, k: .032, pockets: pocketsOf(4), pw: .22, ws: .25, pillar: 0 },
+  small:  { name: '小皿',     tag: '狭い・2穴', desc: '狭くて深い。向かい合う大きなポケットが2つ、壁は速く回る。ぶつかり合いが多い', R: 4.8, k: .07, pockets: pocketsOf(2), pw: .30, ws: .45, pillar: 0 },
+  pillar: { name: '中央柱',   tag: '柱・3穴', desc: '中央に柱が立つ。柱に当たると跳ね返り、回転が少し減る', R: 5.8, k: .045, pockets: pocketsOf(3), pw: .30, ws: .35, pillar: .75 },
+  holes:  { name: '穴だらけ', tag: '6穴・逆回転', desc: '小さなポケットが6つ。壁は逆向きに少し速く回る', R: 5.5, k: .045, pockets: pocketsOf(6), pw: .20, ws: -.45, pillar: 0 },
+};
+const FIELD_IDS = Object.keys(FIELDS);
+let FIELD = FIELDS.std, FIELD_ID = 'std';
 const WALL = { phase: 0 };
 // 物理計算の現在時刻（衝突した時刻を記録するのに使う）
 const SIM = { t: 0 };
 const OMEGA_MIN = 7, MATCH_TIME = 60;
-const height = r => BOWL_K * r * r;
+const height = r => FIELD.k * r * r;
 
 // 回転の減り方（rad/s²）。床との摩擦は I が大きいほど効きにくく、
 // 空気抵抗は形がギザギザなほど、偏りは重心が軸から遠いほど大きい。
@@ -742,7 +767,7 @@ function stepTop(t, dt) {
   const r = Math.hypot(t.x, t.z) || 1e-6;
   const sr = clamp01(t.w / t.w0);
   // すり鉢の傾斜で中心へ
-  let ax = -G * 2 * BOWL_K * t.x, az = -G * 2 * BOWL_K * t.z;
+  let ax = -G * 2 * FIELD.k * t.x, az = -G * 2 * FIELD.k * t.z;
   // 回転と床の摩擦で、すり鉢を周回する流れ（ギザギザな形ほど床をつかんで暴れる）
   // 進行方向を少しずつ曲げるので、中央を何度も横切る花びら状の軌跡になる
   const drift = (0.8 + 2.4 * (1 - t.g.round)) * sr;
@@ -763,10 +788,10 @@ function stepTop(t, dt) {
   // 壁とポケット
   const r2 = Math.hypot(t.x, t.z);
   const ang = Math.atan2(t.z, t.x);
-  const inPocket = POCKETS.some(p0 => { const p = p0 + WALL.phase; return Math.abs(Math.atan2(Math.sin(ang - p), Math.cos(ang - p))) < POCKET_W; });
+  const inPocket = FIELD.pockets.some(p0 => { const p = p0 + WALL.phase; return Math.abs(Math.atan2(Math.sin(ang - p), Math.cos(ang - p))) < FIELD.pw; });
   const reach = t.g.maxR * .75;
   if (inPocket && !hyper) {   // ハイパー無敵中はポケットも壁として跳ね返る
-    if (r2 > ARENA_R + (t.passive === 'rubber' ? 1 : .15)) {   // ゴム壁は縁で粘る
+    if (r2 > FIELD.R + (t.passive === 'rubber' ? 1 : .15)) {   // ゴム壁は縁で粘る
       if (t.passive === 'revive' && !t.revived) {
         // パッシブ「リスポーン」：1回だけ、落ちる前と同じ回転のまま中央付近に戻る
         t.revived = true;
@@ -775,7 +800,7 @@ function stepTop(t, dt) {
         t.evt = 'revive';
       } else { t.state = 'out'; t.vy = 1; t.reason = '場外'; }
     }
-  } else if (r2 + reach > ARENA_R) {
+  } else if (r2 + reach > FIELD.R) {
     const nx = t.x / r2, nz = t.z / r2;
     const vn = t.vx * nx + t.vz * nz;
     if (vn > 0) {
@@ -784,11 +809,25 @@ function stepTop(t, dt) {
       // パッシブ「ゴム壁」：壁に当たるたびに回転を5%取り戻す（壁に押し付けられている間に連続で回復しないよう0.5秒に1回まで）
       if (rubber && vn > .8 && !(SIM.t - (t.rubberAt ?? -9) < .5)) { t.rubberAt = SIM.t; t.w = Math.min(t.w0, t.w + t.w0 * .05); }
       // 壁との擦れで回転を失い、横に弾かれる。壁が回っているので、その向きにも少し押される
-      t.vx += -nz * (t.w * .02 + WALL_SPEED * ARENA_R * .25); t.vz += nx * (t.w * .02 + WALL_SPEED * ARENA_R * .25);
+      t.vx += -nz * (t.w * .02 + FIELD.ws * FIELD.R * .25); t.vz += nx * (t.w * .02 + FIELD.ws * FIELD.R * .25);
       if (!hyper && !rubber) t.w -= Math.min(t.w * .06, vn * 1.2);   // パッシブ「ゴム壁」は壁で回転を失わない
       t.hitWall = vn;
     }
-    t.x = nx * (ARENA_R - reach); t.z = nz * (ARENA_R - reach);
+    t.x = nx * (FIELD.R - reach); t.z = nz * (FIELD.R - reach);
+  }
+  // 中央の柱：外向きに跳ね返し、当たった強さに応じて回転が少し減る
+  if (FIELD.pillar) {
+    const pr = FIELD.pillar + reach, d = Math.hypot(t.x, t.z);
+    if (d < pr) {
+      const nx = d > 1e-6 ? t.x / d : 1, nz = d > 1e-6 ? t.z / d : 0;
+      const vn = t.vx * nx + t.vz * nz;
+      if (vn < 0) {
+        t.vx -= 1.8 * vn * nx; t.vz -= 1.8 * vn * nz;
+        if (!hyper) t.w -= Math.min(t.w * .04, -vn * .8);
+        t.hitWall = -vn;
+      }
+      t.x = nx * pr; t.z = nz * pr;
+    }
   }
 
   // パッシブ「吸収回転」は回転の減りが1.6倍、「重装」は1.1倍
@@ -880,10 +919,9 @@ function collide(a, b) {
 }
 
 // 発射位置：人数に応じて円周上に等間隔に並べる（2人なら左手前と右奥）
-const START_R = 3.4;
 function startPos(i, n) {
-  const a = Math.PI - .36 + i * Math.PI * 2 / n;
-  return [Math.cos(a) * START_R, Math.sin(a) * START_R];
+  const a = Math.PI - .36 + i * Math.PI * 2 / n, r = FIELD.R * .62;
+  return [Math.cos(a) * r, Math.sin(a) * r];
 }
 // entries: [{ g, p, a, gone }]。p は強さ（0〜1）、a は射出角、gone は最初から不参加（退出済み）
 function newBattle(entries) {
@@ -903,7 +941,7 @@ function stepBattle(B) {
   const T = B.tops;
   for (let s = 0; s < SUB; s++) {
     SIM.t = B.t + s * DT;
-    WALL.phase = SIM.t * WALL_SPEED;
+    WALL.phase = SIM.t * FIELD.ws;
     for (const t of T) stepTop(t, DT);
     for (let i = 0; i < T.length; i++) for (let j = i + 1; j < T.length; j++) collide(T[i], T[j]);
   }
@@ -1062,8 +1100,8 @@ function cpuSkillAI(B, i) {
     // 操縦中の CPU：縁に寄りすぎたら中央へ戻り、そうでなければいちばん弱っている相手へ向かう
     // 縁に寄りすぎたら中央へ戻る。1対1のときだけ、中央寄りにいる相手へ向かう
     const foes = B.tops.filter(o => o !== t && o.state === 'spin');
-    if (Math.hypot(t.x, t.z) > 3.6) steerTo(B, i, 0, 0);
-    else if (foes.length === 1 && Math.hypot(foes[0].x, foes[0].z) < 3.8) steerTo(B, i, foes[0].x, foes[0].z);
+    if (Math.hypot(t.x, t.z) > FIELD.R * .65) steerTo(B, i, 0, 0);
+    else if (foes.length === 1 && Math.hypot(foes[0].x, foes[0].z) < FIELD.R * .7) steerTo(B, i, foes[0].x, foes[0].z);
   }
   if (!skillReady(B, t)) return;
   const others = B.tops.filter(o => o !== t && o.state === 'spin');
@@ -1076,7 +1114,7 @@ function cpuSkillAI(B, i) {
     guard: near < 2.3,
     shock: near < 2.6,
     charge: ratio(t) < .4,
-    center: Math.hypot(t.x, t.z) > 4.2,
+    center: Math.hypot(t.x, t.z) > FIELD.R * .76,
   }[t.skill];
   if (go) useSkill(B, i);
 }
@@ -1089,7 +1127,7 @@ window.__simulate = (list, ps) => {
   return { winIdx: B.winIdx, code: B.code, order: B.order, t: +B.t.toFixed(1), hits };
 };
 // 動作確認・強さの分析用に、物理計算の関数を外から呼べるようにしておく
-window.__mg = { analyzeGlyph: (...a) => analyzeGlyph(...a), newBattle: (...a) => newBattle(...a), stepBattle: (...a) => stepBattle(...a), cpuSkillAI: (...a) => cpuSkillAI(...a), startPos: (...a) => startPos(...a), ensureFont: (...a) => ensureFont(...a), fontById: (...a) => fontById(...a), drain: () => { _hits.length = 0; } };
+window.__mg = { analyzeGlyph: (...a) => analyzeGlyph(...a), newBattle: (...a) => newBattle(...a), stepBattle: (...a) => stepBattle(...a), cpuSkillAI: (...a) => cpuSkillAI(...a), startPos: (...a) => startPos(...a), ensureFont: (...a) => ensureFont(...a), fontById: (...a) => fontById(...a), drain: () => { _hits.length = 0; }, setField: id => setField(id), field: () => FIELD_ID };
 window.__analyze = (ch, f) => { const g = analyzeGlyph(ch, f); return { area: +g.area.toFixed(3), maxR: +g.maxR.toFixed(3), round: +g.round.toFixed(3), ecc: +g.ecc.toFixed(3), I: +g.inertia.toFixed(3), decay45: +spinDecayRate(g, 45).toFixed(3), ...ratings(g) }; };
 
 // ───────── 3D表示 ─────────
@@ -1111,53 +1149,67 @@ sun.position.set(4, 10, 6); scene.add(sun);
 
 // すり鉢状のスタジアム
 // 壁は回るので、まとめて1つのグループに入れる（rotation.y = -WALL.phase でポケットの位置と合う）
-const wallGroup = new THREE.Group();
-(function buildArena() {
+const wallGroup = new THREE.Group(), arenaGroup = new THREE.Group();
+scene.add(arenaGroup); scene.add(wallGroup);
+const woodTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 512;
+  const x = c.getContext('2d');
+  x.fillStyle = '#c9b48a'; x.fillRect(0, 0, 512, 512);
+  // 木目
+  for (let i = 0; i < 90; i++) {
+    x.strokeStyle = `rgba(90,60,30,${.04 + Math.random() * .08})`; x.lineWidth = 1 + Math.random() * 3;
+    x.beginPath(); const y0 = Math.random() * 512; x.moveTo(0, y0);
+    for (let k = 0; k <= 8; k++) x.lineTo(k * 64, y0 + Math.sin(k + i) * 6);
+    x.stroke();
+  }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 1);
+  return t;
+})();
+const bowlMat = new THREE.MeshStandardMaterial({ map: woodTex, side: THREE.DoubleSide, roughness: .85 });
+const lineMat = new THREE.LineBasicMaterial({ color: 0x7a5a2e, transparent: true, opacity: .55 });
+const wallMat = new THREE.MeshStandardMaterial({ color: 0x2b375e, roughness: .5, metalness: .2, side: THREE.DoubleSide });
+const capMat = new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: .35, metalness: .6 });
+const underMat = new THREE.MeshBasicMaterial({ color: 0x0b1020 });
+// いまのステージ（FIELD）に合わせて、すり鉢・壁・柱を作り直す
+function buildArena() {
+  for (const g of [arenaGroup, wallGroup]) {
+    for (const o of [...g.children]) { g.remove(o); if (o.geometry) o.geometry.dispose(); }
+  }
+  const R = FIELD.R;
   const prof = [];
-  for (let i = 0; i <= 24; i++) { const r = ARENA_R * i / 24; prof.push(new THREE.Vector2(r, height(r))); }
-  prof.push(new THREE.Vector2(ARENA_R + .01, height(ARENA_R)));
-  const bowl = new THREE.LatheGeometry(prof, 96);
-  const tex = (() => {
-    const c = document.createElement('canvas'); c.width = c.height = 512;
-    const x = c.getContext('2d');
-    x.fillStyle = '#c9b48a'; x.fillRect(0, 0, 512, 512);
-    // 木目
-    for (let i = 0; i < 90; i++) {
-      x.strokeStyle = `rgba(90,60,30,${.04 + Math.random() * .08})`; x.lineWidth = 1 + Math.random() * 3;
-      x.beginPath(); const y0 = Math.random() * 512; x.moveTo(0, y0);
-      for (let k = 0; k <= 8; k++) x.lineTo(k * 64, y0 + Math.sin(k + i) * 6);
-      x.stroke();
-    }
-    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 1);
-    return t;
-  })();
-  const bowlMesh = new THREE.Mesh(bowl, new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide, roughness: .85 }));
-  scene.add(bowlMesh);
-  // 中心の円と放射線（土俵の仕切り線に相当）
-  const lineMat = new THREE.LineBasicMaterial({ color: 0x7a5a2e, transparent: true, opacity: .55 });
-  for (const rr of [1.2, 3.2]) {
+  for (let i = 0; i <= 24; i++) { const r = R * i / 24; prof.push(new THREE.Vector2(r, height(r))); }
+  prof.push(new THREE.Vector2(R + .01, height(R)));
+  arenaGroup.add(new THREE.Mesh(new THREE.LatheGeometry(prof, 96), bowlMat));
+  // 中心の円（土俵の仕切り線に相当）
+  for (const rr of [R * .22, R * .58]) {
+    if (rr < FIELD.pillar + .1) continue;
     const pts = [];
     for (let i = 0; i <= 96; i++) { const a = i / 96 * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * rr, height(rr) + .01, Math.sin(a) * rr)); }
-    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
+    arenaGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
   }
-  // 壁（ポケット部分は切れている）
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x2b375e, roughness: .5, metalness: .2 });
-  const capMat = new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: .35, metalness: .6 });
-  const segs = 3;
-  scene.add(wallGroup);
+  // 中央の柱
+  if (FIELD.pillar) {
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(FIELD.pillar, FIELD.pillar * 1.08, .6, 40), wallMat);
+    col.position.y = .3; arenaGroup.add(col);
+    const cap = new THREE.Mesh(new THREE.TorusGeometry(FIELD.pillar, .06, 8, 40), capMat);
+    cap.rotation.x = Math.PI / 2; cap.position.y = .6; arenaGroup.add(cap);
+  }
+  // 壁（ポケット部分は切れている）。壁はまとめて回すので wallGroup に入れる（rotation.y = -WALL.phase でポケットの位置と合う）
+  const P = FIELD.pockets, segs = P.length;
   for (let s = 0; s < segs; s++) {
-    const a0 = POCKETS[s] + POCKET_W, a1 = POCKETS[(s + 1) % segs] - POCKET_W + (s === segs - 1 ? Math.PI * 2 : 0);
+    const a0 = P[s] + FIELD.pw, a1 = P[(s + 1) % segs] - FIELD.pw + (s === segs - 1 ? Math.PI * 2 : 0);
     // three.js の CylinderGeometry は θ を z→x 方向に測るので、atan2(z, x) の角度から変換する
-    const geo = new THREE.CylinderGeometry(ARENA_R + .25, ARENA_R + .25, .55, 64, 1, true, Math.PI / 2 - a1, a1 - a0);
-    const wall = new THREE.Mesh(geo, wallMat); wall.material.side = THREE.DoubleSide;
-    wall.position.y = height(ARENA_R) + .2; wallGroup.add(wall);
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(ARENA_R + .25, .06, 8, 64, a1 - a0), capMat);
-    rim.rotation.x = Math.PI / 2; rim.rotation.z = a0; rim.position.y = height(ARENA_R) + .48; wallGroup.add(rim);
+    const geo = new THREE.CylinderGeometry(R + .25, R + .25, .55, 64, 1, true, Math.PI / 2 - a1, a1 - a0);
+    const wall = new THREE.Mesh(geo, wallMat);
+    wall.position.y = height(R) + .2; wallGroup.add(wall);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(R + .25, .06, 8, 64, a1 - a0), capMat);
+    rim.rotation.x = Math.PI / 2; rim.rotation.z = a0; rim.position.y = height(R) + .48; wallGroup.add(rim);
   }
   // 床下の影
-  const under = new THREE.Mesh(new THREE.CircleGeometry(ARENA_R + 3, 64), new THREE.MeshBasicMaterial({ color: 0x0b1020 }));
-  under.rotation.x = -Math.PI / 2; under.position.y = -2.5; scene.add(under);
-})();
+  const under = new THREE.Mesh(new THREE.CircleGeometry(R + 3, 64), underMat);
+  under.rotation.x = -Math.PI / 2; under.position.y = -2.5; arenaGroup.add(under);
+}
+buildArena();
 
 // コマのメッシュ：文字の板を何層も重ねて厚みを出す
 function buildTopMesh(g, color) {
@@ -1277,7 +1329,8 @@ function clink(power) {
 
 function placeMesh(m, t) {
   const r = Math.hypot(t.x, t.z);
-  m.root.position.set(t.x, height(Math.min(r, ARENA_R)) + t.y, t.z);
+  // 中央柱のステージで柱の上にいる（待機中の見本のコマ）ときは、柱の上に載せる
+  m.root.position.set(t.x, height(Math.min(r, FIELD.R)) + t.y + (r < FIELD.pillar ? .6 : 0), t.z);
   m.spin.rotation.y = t.th;
   const sr = clamp01(t.w / t.w0);
   t.prec += (2 + 6 * (1 - sr)) / 60;
@@ -1291,8 +1344,8 @@ function resize() {
   const w = box.clientWidth || window.innerWidth, h = box.clientHeight || window.innerHeight;
   if (renderer) { renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.setSize(w, h, false); }
   camera.aspect = w / h;
-  // スタジアム全体（直径約13）が横幅に収まる距離をとる
-  const fitH = 7.6 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  // スタジアム全体（半径＋余白）が横幅に収まる距離をとる。標準より小さいステージは寄らずに小さく見せる
+  const fitH = (Math.max(FIELD.R, 5.5) + 2.1) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const fitW = fitH / Math.min(1, camera.aspect);
   const dist = Math.max(13, fitW * .95);
   camera.position.set(0, dist * .78, dist * .62);
@@ -1325,6 +1378,7 @@ const store = {
 };
 
 const S = {
+  fieldSel: (v => v === 'random' || FIELDS[v] ? v : 'std')(store.get('mg.field', 'std')), fieldNext: 'std',
   ch: store.get('mg.ch', '龍'), font: store.get('mg.font', 'gothic'), skill: store.get('mg.skill', 'dash'),
   passive: store.get('mg.passive', 'none'), xf: cleanXf(store.get('mg.xf', null)),
   g: null, streak: 0,
@@ -1356,6 +1410,62 @@ function renderFontChips() {
 }
 
 // 選択肢カードを並べる（アビリティ・パッシブ共通）
+// ── ステージ ──
+// fieldSel は自分の選択（'random' か ステージ名）、fieldNext は次の試合で使うステージ（ランダムなら事前に決めておく）
+const rollField = () => FIELD_IDS[Math.floor(Math.random() * FIELD_IDS.length)];
+// レート戦は試合番号から決める（2人とも同じステージが事前に分かり、どちらも選べない）
+const fieldFromMid = mid => { let h = 0; for (const c of String(mid)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return FIELD_IDS[h % FIELD_IDS.length]; };
+function setField(id) {
+  if (!FIELDS[id] || id === FIELD_ID) return;
+  FIELD_ID = id; FIELD = FIELDS[id];
+  buildArena(); resize();
+}
+// 自分が選べるのは、ルームに入っていないとき（CPU戦）と、レート戦でないルームのホストのとき
+const fieldLocked = () => !!(ON.R && (ON.rated || ON.role !== 'host'));
+function effectiveField() {
+  if (ON.R && ON.rated) return ON.rated.field;
+  if (ON.R && ON.role !== 'host') return ON.hostField || null;   // ホストの選んだステージが届くまでは未定
+  return S.fieldNext;
+}
+// 待機中はプレビュー（上のスタジアム）を次の試合のステージにし、ホストはそれをほかの人へ知らせる
+function refreshField() {
+  const id = effectiveField();
+  if (id && S.mode === 'idle') setField(id);
+  if (ON.R && ON.role === 'host' && id && ON.sentField !== id) { ON.sentField = id; ON.R.presence({ field: id }).catch(() => {}); }
+  renderFieldUI();
+}
+function renderFieldChips() {
+  const box = $('fields'); box.innerHTML = '';
+  for (const id of ['random', ...FIELD_IDS]) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'opt'; b.dataset.field = id; b.setAttribute('role', 'radio');
+    const nm = document.createElement('b'); nm.textContent = id === 'random' ? 'ランダム' : FIELDS[id].name;
+    const sm = document.createElement('small'); sm.textContent = id === 'random' ? '毎試合変わる' : FIELDS[id].tag;
+    b.append(nm, sm);
+    b.addEventListener('click', () => {
+      if (fieldLocked() || S.mode !== 'idle') return;
+      S.fieldSel = id; store.set('mg.field', id);
+      S.fieldNext = id === 'random' ? rollField() : id;
+      refreshField();
+    });
+    box.appendChild(b);
+  }
+}
+function renderFieldUI() {
+  const locked = fieldLocked(), id = effectiveField();
+  for (const b of $('fields').children) {
+    const k = b.dataset.field;
+    b.disabled = locked;
+    b.setAttribute('aria-checked', String(locked ? (ON.rated ? k === 'random' : k === id) : k === S.fieldSel));
+  }
+  $('fieldHint').textContent = !locked ? '試合前に上の画面で確かめられます' : ON.rated ? 'レート戦はランダム（選べません）' : 'ホストが選びます';
+  const f = id && FIELDS[id];
+  const how = !f ? '' : ON.rated ? '（ランダムで決定）' : !locked && S.fieldSel === 'random' ? '（ランダムで決定。試合ごとに変わります）' : '';
+  $('fieldDesc').textContent = f ? `次のステージは「${f.name}」${how}。${f.desc}` : 'ホストの選んだステージを確認しています…';
+  $('fieldTagName').textContent = f ? f.name + (how ? '（ランダム）' : '') : '確認中';
+  $('fieldTagDesc').textContent = f ? f.desc : '';
+}
+
 function renderCards(box, ids, defs, current, meta, onPick) {
   box.innerHTML = '';
   for (const id of ids) {
@@ -1761,6 +1871,7 @@ function backToSetup() {
   clearBattleMeshes();
   S.battle = null;
   S.mode = 'idle';
+  if (S.fieldSel === 'random') S.fieldNext = rollField();
   document.body.classList.remove('playing'); resize();
   $('result').hidden = true; $('hud').hidden = true; $('launch').hidden = true; $('skillBar').hidden = true; $('toast').hidden = true;
   $('setup').hidden = false;
@@ -1886,7 +1997,7 @@ const ON = {
 };
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 // 通信の取り決めの版。ページを更新して中身が変わったら上げる（版が違う人どうしは試合を始められない）
-const PROTO = 6;
+const PROTO = 7;
 
 // ほかの人から届く値はすべて信用せず、型と範囲を確かめてから使う
 const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
@@ -2050,7 +2161,7 @@ async function joinRoom(code, role) {
   sfx('join', .6);
   Object.assign(ON, { role, code, ready: false, m: 0, phase: 'lobby', players: [], gone: new Set(), myShot: null,
     hostPeer: null, seats: [], members: [], rec: { w: 0, l: 0 }, hitSeq: 0, seenHit: 0, evSeq: 0, seenEv: 0,
-    hits: [], evs: [], skLast: new Map(), full: false });
+    hits: [], evs: [], skLast: new Map(), full: false, sentField: null, hostField: null });
   onMsg('');
   ON.unsubPeers = ON.R.onPeers(() => sync(), () => { onMsg('ルームとの接続が切れました。退出して入り直してください。'); });
   resetChat();
@@ -2124,6 +2235,7 @@ function sync() {
     else if (hostP) onMsg('');
     if (!hostP && ON.hostPeer) hostLeft();
     ON.hostPeer = hostP ? hostP.peer : null;
+    ON.hostField = hostP && typeof hostP.presence.field === 'string' && FIELDS[hostP.presence.field] ? hostP.presence.field : null;
   }
   // 参加者の一覧（ホストが先頭、あとは座席順）
   const ids = ON.role === 'host' ? [ON.me, ...ON.seats] : (hostP ? [hostP.peer, ...ON.seats] : []);
@@ -2141,6 +2253,7 @@ function sync() {
   // 古い（または新しい）版のページを開いている人がいると試合が始まらないので、はっきり知らせる
   ON.stale = ON.members.some(m => !m.me && m.pres && m.pres.v !== PROTO);
   if (ON.stale) onMsg('ページの版が違う参加者がいるため、試合を始められません。全員ページを再読み込み（更新）してください。');
+  refreshField();   // 試合が始まる前に、ステージをホストのものにそろえておく
   if (ON.role === 'host') hostTick(byPeer); else guestTick(hostP ? hostP.presence : null);
   updateRoomUI();
 }
@@ -2262,6 +2375,8 @@ function guestTick(hp) {
       return mm && mm.g ? { ch: mm.ch, font: mm.font, g: mm.g, skill: mm.skill, passive: mm.passive, name: mm.name } : null;
     });
     if (players.some(p => !p)) return;   // 文字の形を読み込み中。次の更新でもう一度試す
+    if (!FIELDS[hp.field]) return;   // ステージが届いていない
+    setField(hp.field);
     ON.m = m; ON.ready = false; ON.myShot = null; ON.seenHit = 0; ON.seenEv = 0; ON.players = ids;
     ON.R.presence({ ready: false, shot: null }).catch(() => {});
     S.kind = 'online';
@@ -2333,6 +2448,7 @@ function updateRoomUI() {
   $('rtBanner').hidden = !(inRoom && ON.rated);
   $('codeLine').hidden = !!(inRoom && ON.rated);
   RT.render();
+  refreshField();
   if (!inRoom) return;
   $('codeOut').textContent = ON.code;
   const box = $('members'); box.innerHTML = '';
@@ -2710,9 +2826,9 @@ const RT = {
     try { m = (await ACC.db.collection('matches').doc(mid).get()).data(); } catch (e) { RT.render(); return; }
     const i = m.players.indexOf(ACC.user.uid), o = 1 - i;
     ON.rated = { mid, me: ACC.user.uid, opp: m.players[o], oppHandle: m.handles[o], oppRating: m.ratings[o], myRating: m.ratings[i],
-      deadline: Date.now() + RATED_PREP, reported: false, done: false };
+      deadline: Date.now() + RATED_PREP, reported: false, done: false, field: fieldFromMid(mid) };
     ON.forcedDeck = null; $('rtForced').hidden = true;
-    $('rtVs').textContent = `${m.handles[i]}（${m.ratings[i]}）　対　${m.handles[o]}（${m.ratings[o]}）`;
+    $('rtVs').textContent = `${m.handles[i]}（${m.ratings[i]}）　対　${m.handles[o]}（${m.ratings[o]}）　ステージ：${FIELDS[ON.rated.field].name}`;
     sfx('join', .7, 0);
     RT.randomDeck = await RT.makeRandomDeck();
     selectTab('online');
@@ -2816,6 +2932,8 @@ $('skillBtn').addEventListener('click', pressSkill);
 $('next').addEventListener('click', async () => {
   if (S.kind === 'online' && ON.rated) { await leaveRoom(); selectTab('rated'); RT.start(); return; }
   if (S.kind === 'online') { backToSetup(); if (ON.R) setReady(true); return; }
+  if (S.fieldSel === 'random') S.fieldNext = rollField();
+  setField(S.fieldNext);
   await rerollCpus(); startCpu();
 });
 $('again').addEventListener('click', startCpu);
@@ -2988,8 +3106,8 @@ function frame(now) {
     if (S.mode === 'battle' && (doneLocal || doneRemote)) finish();
   }
   // 壁の回転：対戦中は試合時間に合わせ（ポケットの位置と一致させる）、待機中はゆっくり回して見せる
-  if (S.battle && (S.mode === 'battle' || S.mode === 'result')) wallGroup.rotation.y = -S.battle.t * WALL_SPEED;
-  else if (S.mode === 'idle') wallGroup.rotation.y = -now / 1000 * WALL_SPEED * .5;
+  if (S.battle && (S.mode === 'battle' || S.mode === 'result')) wallGroup.rotation.y = -S.battle.t * FIELD.ws;
+  else if (S.mode === 'idle') wallGroup.rotation.y = -now / 1000 * FIELD.ws * .5;
   else wallGroup.rotation.y = 0;
   stepSparks(dt);
   if (renderer) renderer.render(scene, camera);
@@ -3000,6 +3118,8 @@ resize();
 renderFontChips();
 renderSkills();
 renderPassives();
+S.fieldNext = S.fieldSel === 'random' ? rollField() : S.fieldSel;
+renderFieldChips(); refreshField();
 renderCpuCount();
 updateRoomUI();
 initRoom();
