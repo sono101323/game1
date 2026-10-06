@@ -1857,12 +1857,13 @@ function finish() {
     }
     $('resStreak').textContent = `この部屋の成績 ${ON.rec.w}勝 ${ON.rec.l}敗`;
     $('next').textContent = 'もう一度';
-    if (ON.rated) { $('next').textContent = 'もう一度マッチング'; RT.report(winIdx); }
+    if (ON.rated) $('next').textContent = 'もう一度マッチング';
     $('again').hidden = true;
   }
   $('change').textContent = ON.rated ? '戻る' : '字を選びなおす';
   if (!ON.rated) $('rateChg').hidden = true;
   $('result').hidden = false;
+  if (S.kind === 'online' && ON.rated) RT.onFinish(winIdx);
   $('next').focus();
 }
 
@@ -1997,7 +1998,7 @@ const ON = {
 };
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 // 通信の取り決めの版。ページを更新して中身が変わったら上げる（版が違う人どうしは試合を始められない）
-const PROTO = 7;
+const PROTO = 8;
 
 // ほかの人から届く値はすべて信用せず、型と範囲を確かめてから使う
 const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
@@ -2577,7 +2578,7 @@ function onAuth(user) {
   if (!user) { ACC.state = 'out'; RT.stop(); renderAcct(); return; }
   ACC.state = 'loading'; renderAcct();
   ACC.unsub = ACC.db.collection('users').doc(user.uid).onSnapshot(snap => {
-    if (snap.exists) { ACC.prof = snap.data(); ACC.state = 'in'; }
+    if (snap.exists) { ACC.prof = snap.data(); ACC.state = 'in'; RT.resume(); }
     else { ACC.prof = null; ACC.state = ACC.registering ? 'loading' : 'needId'; }
     renderAcct();
   }, () => { ACC.state = 'needId'; renderAcct(); });
@@ -2723,6 +2724,13 @@ setIdMode('login');
 // 組めたら、その試合の番号でいつものオンラインルームに入り、1対1で対戦する。
 // 結果は2人がそれぞれ報告し、一致したときだけ各自が自分のレートを動かす（規則で ±40 点以内に制限）
 const RATED_PREP = 30000;     // 準備時間（ミリ秒）
+// イロレーティング（K=32）。勝てば最低+1、負ければ最低-1。Firestore の規則でも同じ計算で確かめる
+function eloDelta(my, opp, won) {
+  const E = 1 / (1 + Math.pow(10, (opp - my) / 400));
+  let d = Math.round(32 * ((won ? 1 : 0) - E));
+  if (won && d < 1) d = 1; if (!won && d > -1) d = -1;
+  return Math.max(-40, Math.min(40, d));
+}
 const RT = {
   searching: false, t0: 0, timer: null, busy: false, beatAt: 0, lastRank: 0, randomDeck: null, cd: null, unsubMatch: null,
 
@@ -2807,7 +2815,7 @@ const RT = {
         if (!qa.exists || !qb.exists || qa.data().match || qb.data().match) throw new Error('taken');
         const ua = await tx.get(db.collection('users').doc(uid)), ub = await tx.get(db.collection('users').doc(oid));
         tx.set(mref, { players: [uid, oid], ratings: [ua.data().rating, ub.data().rating], handles: [ua.data().handle, ub.data().handle],
-          host: uid, code, createdAt: ts(), reports: {}, applied: {} });
+          host: uid, code, createdAt: ts(), result: null, applied: {} });
         tx.update(qa.ref, { match: mref.id });
         tx.update(qb.ref, { match: mref.id });
       });
@@ -2826,8 +2834,9 @@ const RT = {
     try { m = (await ACC.db.collection('matches').doc(mid).get()).data(); } catch (e) { RT.render(); return; }
     const i = m.players.indexOf(ACC.user.uid), o = 1 - i;
     ON.rated = { mid, me: ACC.user.uid, opp: m.players[o], oppHandle: m.handles[o], oppRating: m.ratings[o], myRating: m.ratings[i],
-      deadline: Date.now() + RATED_PREP, reported: false, done: false, field: fieldFromMid(mid) };
+      deadline: Date.now() + RATED_PREP, field: fieldFromMid(mid), isHost: m.host === ACC.user.uid };
     ON.forcedDeck = null; $('rtForced').hidden = true;
+    RT.watch(ON.rated);
     $('rtVs').textContent = `${m.handles[i]}（${m.ratings[i]}）　対　${m.handles[o]}（${m.ratings[o]}）　ステージ：${FIELDS[ON.rated.field].name}`;
     sfx('join', .7, 0);
     RT.randomDeck = await RT.makeRandomDeck();
@@ -2879,41 +2888,97 @@ const RT = {
   },
   endRated() { clearInterval(RT.cd); RT.cd = null; if (RT.unsubMatch) { RT.unsubMatch(); RT.unsubMatch = null; } ON.rated = null; ON.forcedDeck = null; },
 
-  // 試合が終わったら、勝者を報告し、2人の報告がそろったら自分のレートを動かす
-  async report(winIdx) {
-    const R = ON.rated;
-    if (!R || R.reported) return;
-    R.reported = true;
-    const chg = $('rateChg');
-    chg.hidden = false; chg.className = 'ratechg'; chg.textContent = 'レートを計算しています…';
-    const wPeer = ON.players[winIdx];
-    const winner = wPeer === ON.me ? R.me : R.opp;
-    const mref = ACC.db.collection('matches').doc(R.mid);
-    try { await mref.update({ ['reports.' + R.me]: winner }); }
-    catch (e) { chg.textContent = '結果を送れなかったため、レートは変わりません。'; return; }
-    const giveUp = setTimeout(() => { if (!R.done) { R.done = true; chg.textContent = '相手の結果報告が届かないため、レートは変わりません。'; if (RT.unsubMatch) RT.unsubMatch(); } }, 60000);
-    RT.unsubMatch = mref.onSnapshot(async snap => {
-      const m = snap.data(); if (!m || R.done) return;
-      const rep = m.reports || {};
-      if (!(R.opp in rep) || !(R.me in rep)) return;
-      R.done = true; clearTimeout(giveUp);
-      if (RT.unsubMatch) { RT.unsubMatch(); RT.unsubMatch = null; }
-      if (rep[R.opp] !== rep[R.me]) { chg.textContent = '2人の結果報告が食い違ったため、レートは変わりません。'; return; }
-      const won = rep[R.me] === R.me;
-      const E = 1 / (1 + Math.pow(10, (R.oppRating - R.myRating) / 400));
-      let d = Math.round(32 * ((won ? 1 : 0) - E));
-      if (won && d < 1) d = 1; if (!won && d > -1) d = -1;
-      d = Math.max(-40, Math.min(40, d));
-      const p = ACC.prof, b = ACC.db.batch();
-      b.update(ACC.db.collection('users').doc(R.me), { rating: p.rating + d, wins: p.wins + (won ? 1 : 0), losses: p.losses + (won ? 0 : 1), games: p.games + 1, lastMatch: R.mid });
-      b.update(mref, { ['applied.' + R.me]: true });
-      try {
-        await b.commit();
-        chg.className = 'ratechg ' + (d > 0 ? 'up' : 'down');
-        chg.textContent = `レート ${p.rating} → ${p.rating + d}（${d > 0 ? '+' : ''}${d}）`;
-        RT.lastRank = 0;
-      } catch (e) { chg.textContent = 'レートを保存できませんでした。'; }
+  // ── 結果とレートの反映 ──
+  // ホスト（試合を計算している側）が勝者を matches に1回だけ書く。結果が書かれたら、2人のどちらの端末からでも
+  // 2人分のレートを1回ずつ反映できる（Firestore の規則で、点数が計算どおりかも確かめる）。
+  // 反映し終わるまで試合番号を端末に覚えておき、途中で画面を閉じても次に開いたときに反映し直す
+  watch(R) {
+    RT.pending = { mid: R.mid, me: R.me, opp: R.opp, myRating: R.myRating, oppRating: R.oppRating, host: !!R.isHost, at: Date.now() };
+    store.set('mg.pendingMatch', RT.pending);
+    if (RT.unsubWatch) { RT.unsubWatch(); RT.unsubWatch = null; }
+    RT.listen();
+  },
+  listen() {
+    const P = RT.pending;
+    if (!P || !ACC.db || RT.unsubWatch) return;
+    RT.unsubWatch = ACC.db.collection('matches').doc(P.mid).onSnapshot(snap => {
+      const m = snap.data();
+      if (!m || RT.pending !== P) return;
+      // ふつうはホストが2人分を反映する。ゲストは3秒待っても反映されていなければ自分で反映する（ホストが閉じた場合など）
+      if (m.result && !(m.applied || {})[P.me]) {
+        if (P.host || P.resumed) RT.apply(P);
+        else if (!P.waitT) P.waitT = setTimeout(() => { if (RT.pending === P) RT.apply(P); }, 3000);
+      }
+      if (m.result) RT.showChange(P, m.result === P.me, !!(m.applied || {})[P.me]);
+      if ((m.applied || {})[P.me]) RT.clearPending(P);
     }, () => {});
+  },
+  clearPending(P) {
+    if (RT.pending !== P) return;
+    RT.pending = null; store.set('mg.pendingMatch', null);
+    if (RT.unsubWatch) { RT.unsubWatch(); RT.unsubWatch = null; }
+    RT.lastRank = 0;
+  },
+  // 前回反映しきれなかった試合があれば、ログイン後に反映する（結果が出ないまま30分たったものは捨てる）
+  resume() {
+    const P = store.get('mg.pendingMatch', null);
+    if (!P || typeof P !== 'object' || typeof P.mid !== 'string' || !ACC.user || P.me !== ACC.user.uid || RT.pending) return;
+    if (Date.now() - (P.at || 0) > 30 * 60 * 1000) { store.set('mg.pendingMatch', null); return; }
+    P.resumed = true; RT.pending = P; RT.listen();
+  },
+  // ホスト：試合が決まった瞬間に勝者を書き、そのまま2人分を反映する
+  async sendResult(winIdx) {
+    const R = ON.rated;
+    if (!R || R.resultSent || ON.role !== 'host') return;
+    R.resultSent = true;
+    const winner = ON.players[winIdx] === ON.me ? R.me : R.opp;
+    // 通信の失敗に備えて、2秒おきに3回まで試す
+    for (let k = 0; ; k++) {
+      try { await ACC.db.collection('matches').doc(R.mid).update({ result: winner }); break; }
+      catch (e) { if (k >= 2) return; await sleep(2000); }
+    }
+    if (RT.pending && RT.pending.mid === R.mid) RT.apply(RT.pending);
+  },
+  async apply(P) {
+    if (P.applying) return;
+    P.applying = true;
+    const db = ACC.db, mref = db.collection('matches').doc(P.mid);
+    try {
+      await db.runTransaction(async tx => {
+        const m = (await tx.get(mref)).data();
+        if (!m || !m.result) return;
+        const applied = m.applied || {};
+        const todo = m.players.filter(u => !applied[u]);
+        if (!todo.length) return;
+        const snaps = await Promise.all(todo.map(u => tx.get(db.collection('users').doc(u))));
+        const upd = {};
+        todo.forEach((u, k) => {
+          const p = snaps[k].data();
+          if (!p) return;
+          const i = m.players.indexOf(u), won = m.result === u;
+          const d = eloDelta(m.ratings[i], m.ratings[1 - i], won);
+          tx.update(snaps[k].ref, { rating: p.rating + d, wins: p.wins + (won ? 1 : 0), losses: p.losses + (won ? 0 : 1), games: p.games + 1, lastMatch: P.mid });
+          upd['applied.' + u] = true;
+        });
+        if (Object.keys(upd).length) tx.update(mref, upd);
+      });
+    } catch (e) { /* 相手の端末が先に反映した、など。変化は監視で受け取る */ }
+    P.applying = false;
+  },
+  // 結果画面のレート表示。勝敗が出た瞬間に見込みを出し、反映が終わったら確定にする
+  showChange(P, won, done) {
+    const chg = $('rateChg');
+    if (!P || $('result').hidden || RT.shownFor !== P.mid) return;
+    const d = eloDelta(P.myRating, P.oppRating, won);
+    chg.hidden = false; chg.className = 'ratechg ' + (d > 0 ? 'up' : 'down');
+    chg.textContent = `レート ${P.myRating} → ${P.myRating + d}（${d > 0 ? '+' : ''}${d}）` + (done ? '' : '　反映中…');
+  },
+  onFinish(winIdx) {
+    const R = ON.rated, P = RT.pending;
+    if (!R || !P || P.mid !== R.mid) return;
+    RT.shownFor = P.mid;
+    RT.showChange(P, ON.players[winIdx] === ON.me, false);
+    if (ON.role === 'host') RT.sendResult(winIdx);
   },
 };
 $('rtSearch').addEventListener('click', () => RT.start());
@@ -3084,6 +3149,8 @@ function frame(now) {
       if (ON.evs.length > 12) ON.evs.splice(0, ON.evs.length - 12);
       if (S.kind === 'online' && ON.R && ON.role === 'host' && ON.skPend.size && !B.over) hostTick();
       if (S.kind === 'online' && ON.R && ON.role === 'host' && (!B.over || B.t - B.overAt < 3.5)) hostSend(now);
+      // レート戦：勝敗が決まった瞬間に結果を記録する（結果画面を待たない）
+      if (B.over && S.kind === 'online' && ON.rated && ON.role === 'host' && !ON.rated.resultSent) RT.sendResult(B.winIdx);
     }
     B.tops.forEach((t, i) => {
       if (S.meshes[i]) placeMesh(S.meshes[i], t);

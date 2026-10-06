@@ -3,7 +3,8 @@ rules_version = '2';
 // - users/{uid}    ：プロフィールとレート（誰でも読める。本人だけが決まった形でしか書き換えられない）
 // - handles/{id}   ：ID（小文字）→ 持ち主。ID の重複を防ぎ、ID とパスワードでのログインに使う
 // - queue/{uid}    ：レート戦の待ち行列
-// - matches/{mid}  ：成立したレート戦。2人の結果報告が一致したときだけレートを動かせる
+// - matches/{mid}  ：成立したレート戦。試合を計算しているホストが勝者（result）を1回だけ書き、
+//                    その結果をもとに、対戦した2人のどちらの端末からでも2人分のレートを1回ずつ反映できる
 service cloud.firestore {
   match /databases/{database}/documents {
     function authed() { return request.auth != null; }
@@ -38,7 +39,7 @@ service cloud.firestore {
         && request.resource.data.handleChangedAt == request.time
         && request.resource.data.createdAt == request.time
         && getAfter(handlePath(request.resource.data.handleLower)).data.uid == uid;
-      allow update: if authed() && me() == uid && (handleChange(uid) || ratingChange(uid));
+      allow update: if authed() && ((me() == uid && handleChange(uid)) || ratingChange(uid));
 
       // ID の変更：1日1回まで。新しい ID の handles を同時に作り、古い ID は消す
       function handleChange(uid) {
@@ -51,21 +52,26 @@ service cloud.firestore {
           && getAfter(handlePath(d.handleLower)).data.uid == uid
           && (d.handleLower == o.handleLower || !existsAfter(handlePath(o.handleLower)));
       }
-      // レートの反映：2人の報告が一致した試合だけ、1試合1回、±40点以内で勝敗と向きが合っているとき
+      // レートの反映：結果の出た試合だけ、1人1試合1回、±40点以内で勝敗と向きが合っているとき。
+      // 本人だけでなく対戦相手も書ける（相手がすぐ画面を閉じても、もう1人の端末が2人分を反映できるように）
       function ratingChange(uid) {
         let d = request.resource.data;
         let o = resource.data;
         let m = get(matchPath(d.lastMatch)).data;
-        let other = m.players[0] == uid ? m.players[1] : m.players[0];
-        let won = m.reports[uid] == uid;
+        let won = m.result == uid;
         let delta = d.rating - o.rating;
+        // イロレーティング（K=32）の値と1点以内で一致すること（相手の端末が書くときも、勝手な点数にはできない）
+        let i = m.players[0] == uid ? 0 : 1;
+        let e = 1.0 / (1.0 + math.pow(10.0, (m.ratings[1 - i] - m.ratings[i]) / 400.0));
+        let want = won ? 32.0 * (1.0 - e) : -32.0 * e;
         return changed().hasOnly(['rating', 'wins', 'losses', 'games', 'lastMatch'])
           && d.lastMatch is string && d.lastMatch != o.lastMatch
-          && uid in m.players
+          && uid in m.players && me() in m.players
+          && m.result in m.players
           && !(uid in m.applied)
           && getAfter(matchPath(d.lastMatch)).data.applied[uid] == true
-          && (uid in m.reports) && (other in m.reports) && m.reports[uid] == m.reports[other]
           && d.games == o.games + 1
+          && math.abs(delta - want) <= 1.0
           && ((won && d.wins == o.wins + 1 && d.losses == o.losses && delta >= 1 && delta <= 40)
             || (!won && d.losses == o.losses + 1 && d.wins == o.wins && delta <= -1 && delta >= -40));
       }
@@ -95,11 +101,11 @@ service cloud.firestore {
       allow get: if authed() && me() in resource.data.players;
       allow list: if false;
       allow create: if authed()
-        && request.resource.data.keys().hasOnly(['players', 'ratings', 'handles', 'host', 'code', 'createdAt', 'reports', 'applied'])
+        && request.resource.data.keys().hasOnly(['players', 'ratings', 'handles', 'host', 'code', 'createdAt', 'result', 'applied'])
         && request.resource.data.players.size() == 2
         && request.resource.data.players[0] == me() && request.resource.data.players[1] != me()
         && request.resource.data.host == me()
-        && request.resource.data.reports == {} && request.resource.data.applied == {}
+        && request.resource.data.result == null && request.resource.data.applied == {}
         && request.resource.data.createdAt == request.time
         && request.resource.data.code is string && request.resource.data.code.matches('^[A-Z0-9]{6}$')
         && request.resource.data.ratings[0] == get(userPath(request.resource.data.players[0])).data.rating
@@ -107,22 +113,26 @@ service cloud.firestore {
         && get(queuePath(request.resource.data.players[1])).data.match == null
         && getAfter(queuePath(request.resource.data.players[1])).data.match == mid
         && getAfter(queuePath(me())).data.match == mid;
-      allow update: if authed() && me() in resource.data.players && (reportOnly() || applyOnly());
+      allow update: if authed() && me() in resource.data.players && (resultOnly() || applyOnly());
 
-      // 勝者の報告：自分の分を1回だけ
-      function reportOnly() {
-        return changed().hasOnly(['reports'])
-          && request.resource.data.reports.diff(resource.data.reports).affectedKeys().hasOnly([me()])
-          && !(me() in resource.data.reports)
-          && request.resource.data.reports[me()] in resource.data.players;
+      // 勝者の記録：試合を計算しているホストが、1回だけ
+      function resultOnly() {
+        return changed().hasOnly(['result'])
+          && me() == resource.data.host
+          && resource.data.result == null
+          && request.resource.data.result in resource.data.players;
       }
-      // レートを反映した印：自分の分を1回だけ、プロフィールの更新と同時に
+      // レートを反映した印：1人1回だけ、その人のプロフィールの更新と同時に（2人分を一度に書いてもよい）
+      function applied1(u) {
+        return !(u in request.resource.data.applied.diff(resource.data.applied).affectedKeys())
+          || (!(u in resource.data.applied) && request.resource.data.applied[u] == true
+            && getAfter(userPath(u)).data.lastMatch == mid);
+      }
       function applyOnly() {
+        let ps = resource.data.players;
         return changed().hasOnly(['applied'])
-          && request.resource.data.applied.diff(resource.data.applied).affectedKeys().hasOnly([me()])
-          && !(me() in resource.data.applied)
-          && request.resource.data.applied[me()] == true
-          && getAfter(userPath(me())).data.lastMatch == mid;
+          && request.resource.data.applied.diff(resource.data.applied).affectedKeys().hasOnly(ps)
+          && applied1(ps[0]) && applied1(ps[1]);
       }
     }
   }
