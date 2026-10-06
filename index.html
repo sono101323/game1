@@ -147,7 +147,7 @@ button.mini { font-size: 11px; padding: 2px 8px; }
 .rtrec span:last-child { font-size: 13px; font-variant-numeric: tabular-nums; }
 .rtsearch { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .rtsearch #rtStatusText { flex: 1; min-width: 0; }
-.spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--brass); animation: spin .8s linear infinite; flex: none; }
+.loader { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--brass); animation: spin .8s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .ranking { display: flex; flex-direction: column; gap: 6px; }
 .rklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; }
@@ -485,7 +485,7 @@ button.mini { font-size: 11px; padding: 2px 8px; }
       </div>
       <button class="go" id="rtSearch" type="button">マッチング開始</button>
       <div class="rtsearch" id="rtStatus" role="status" hidden>
-        <span class="spin" aria-hidden="true"></span>
+        <span class="loader" aria-hidden="true"></span>
         <span id="rtStatusText">対戦相手を探しています…</span>
         <button class="ghost" id="rtCancel" type="button">やめる</button>
       </div>
@@ -781,7 +781,8 @@ function stepTop(t, dt) {
     if (vn > 0) {
       const rubber = t.passive === 'rubber';
       t.vx -= (rubber ? 2 : 1.65) * vn * nx; t.vz -= (rubber ? 2 : 1.65) * vn * nz;
-      if (rubber) t.w = Math.min(t.w0, t.w + t.w0 * .03);   // パッシブ「ゴム壁」：壁に当たるたびに回転を3%取り戻す
+      // パッシブ「ゴム壁」：壁に当たるたびに回転を5%取り戻す（壁に押し付けられている間に連続で回復しないよう0.5秒に1回まで）
+      if (rubber && vn > .8 && !(SIM.t - (t.rubberAt ?? -9) < .5)) { t.rubberAt = SIM.t; t.w = Math.min(t.w0, t.w + t.w0 * .05); }
       // 壁との擦れで回転を失い、横に弾かれる。壁が回っているので、その向きにも少し押される
       t.vx += -nz * (t.w * .02 + WALL_SPEED * ARENA_R * .25); t.vz += nx * (t.w * .02 + WALL_SPEED * ARENA_R * .25);
       if (!hyper && !rubber) t.w -= Math.min(t.w * .06, vn * 1.2);   // パッシブ「ゴム壁」は壁で回転を失わない
@@ -868,8 +869,8 @@ function collide(a, b) {
   if (b.guard > 0 && !(b.dash > 0) && b.w < wb0) b.w = wb0 - (wb0 - b.w) * .7;
   if (a.dash > 0 && a.w < wa0) a.w = wa0 - (wa0 - a.w) * .5;
   if (b.dash > 0 && b.w < wb0) b.w = wb0 - (wb0 - b.w) * .5;
-  // パッシブ「吸収回転」：ぶつかるたびに回転を最大の6%取り戻す
-  for (const t of [a, b]) if (t.passive === 'drain' && j * BOOST > .4) t.w = Math.min(t.w0 * (t.boostAdd ? 1.8 : 1), t.w + t.w0 * .06);
+  // パッシブ「吸収回転」：ぶつかるたびに回転を最大の8%取り戻す（押し合い中に連続で回復しないよう0.3秒に1回まで）
+  for (const t of [a, b]) if (t.passive === 'drain' && j * BOOST > .4 && !(SIM.t - (t.drainAt ?? -9) < .3)) { t.drainAt = SIM.t; t.w = Math.min(t.w0 * (t.boostAdd ? 1.8 : 1), t.w + t.w0 * .08); }
   // 倒した判定のため、お互いに「最後にぶつかった相手」と時刻を覚えておく
   if (j * BOOST > .3) { a.lastHit = b; a.lastHitAt = SIM.t; b.lastHit = a; b.lastHitAt = SIM.t; }
   _hits.push({ x: cx, z: cz, j: j * BOOST });
@@ -2904,8 +2905,10 @@ window.addEventListener('keydown', e => {
 
 // ───────── ループ ─────────
 let last = performance.now();
+let simAcc = 0, simBattle = null;   // 物理は1/60秒刻みの固定ステップ。描画のフレームレート（30Hz・120Hzなど）に関係なく実時間で進める
 function frame(now) {
-  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  const rawDt = Math.min(.25, Math.max(0, (now - last) / 1000)); last = now;
+  const dt = Math.min(.05, rawDt);
   if (S.mode === 'idle' && S.idle && S.idleMesh) {
     S.idle.th += S.idle.w * dt; placeMesh(S.idleMesh, S.idle);
   }
@@ -2936,7 +2939,12 @@ function frame(now) {
         if (t.cdLeft > 0) t.cdLeft = Math.max(0, t.cdLeft - dt);
       }
     } else {
-      if (!B.over || B.t - B.overAt < 3) stepBattle(B);
+      if (simBattle !== B) { simBattle = B; simAcc = 1 / 60; }
+      simAcc += rawDt;
+      while (simAcc >= 1 / 60) {
+        simAcc -= 1 / 60;
+        if (!B.over || B.t - B.overAt < 3) stepBattle(B);
+      }
       // CPU は0.25秒ごとにスキルを使うか考える
       if (S.kind === 'cpu' && !B.over && B.t - S.aiAt > .25) { S.aiAt = B.t; for (let i = 1; i < B.tops.length; i++) cpuSkillAI(B, i); }
       for (const h of _hits) {
@@ -2962,7 +2970,10 @@ function frame(now) {
     B.tops.forEach((t, i) => {
       const h = S.hud[i];
       if (!h) return;
-      h.bar.style.width = (clamp01(t.w / 64) * 100) + '%';
+      // 体力バーは「残りスタミナ」を表示。衝突の瞬間の細かな上下で暴れないよう、表示値をなめらかに追従させる
+      const target = t.state === 'spin' ? stamina(t) : 0;
+      h.v = h.v == null ? target : h.v + (target - h.v) * Math.min(1, dt * 10);
+      h.bar.style.width = (h.v * 100).toFixed(1) + '%';
       h.side.classList.toggle('out', t.state !== 'spin');
     });
     $('timer').textContent = Math.max(0, Math.ceil(MATCH_TIME - B.t));
