@@ -854,7 +854,7 @@ function collide(a, b) {
   // 「ダッシュ」中のコマにぶつけられた側は2倍強く弾かれる
   // 「ハイパー無敵」中のコマにぶつけられた側も同じく2倍（攻撃が最大）
   // パッシブ「逆境」：スタミナ3割未満のとき、ぶつけた相手を1.5倍強く弾く
-  const da = hitPower(b), db = hitPower(a);
+  const da = hitPower(b) * hunterK(b, a), db = hitPower(a) * hunterK(a, b);
   const wa0 = a.w, wb0 = b.w;
   const ta = takeK(a), tb = takeK(b);
   a.vx += Jx / ma * da * ta; a.vz += Jz / ma * da * ta; b.vx -= Jx / mb * db * tb; b.vz -= Jz / mb * db * tb;
@@ -869,6 +869,9 @@ function collide(a, b) {
   if (b.guard > 0 && !(b.dash > 0) && b.w < wb0) b.w = wb0 - (wb0 - b.w) * .7;
   if (a.dash > 0 && a.w < wa0) a.w = wa0 - (wa0 - a.w) * .5;
   if (b.dash > 0 && b.w < wb0) b.w = wb0 - (wb0 - b.w) * .5;
+  // パッシブ「ハンター」：自分よりスタミナが少ない相手に当てると、相手の回転の減りが1.5倍
+  if (da > hitPower(b) && a.w < wa0) a.w = wa0 - (wa0 - a.w) * 1.5;
+  if (db > hitPower(a) && b.w < wb0) b.w = wb0 - (wb0 - b.w) * 1.5;
   // パッシブ「吸収回転」：ぶつかるたびに回転を最大の8%取り戻す（押し合い中に連続で回復しないよう0.3秒に1回まで）
   for (const t of [a, b]) if (t.passive === 'drain' && j * BOOST > .4 && !(SIM.t - (t.drainAt ?? -9) < .3)) { t.drainAt = SIM.t; t.w = Math.min(t.w0 * (t.boostAdd ? 1.8 : 1), t.w + t.w0 * .08); }
   // 倒した判定のため、お互いに「最後にぶつかった相手」と時刻を覚えておく
@@ -915,8 +918,8 @@ function stepBattle(B) {
     if (t.reason !== '退出' && k && k.state === 'spin' && B.t - t.lastHitAt <= KO_WINDOW) {
       k.kos = (k.kos || 0) + 1;
       if (k.passive === 'hunter') {
-        // パッシブ「ハンター」：スタミナを2割回復（最大まで）
-        k.w = Math.min(Math.max(k.w0, k.w), k.w + (k.w0 - OMEGA_MIN) * .2);
+        // パッシブ「ハンター」：スタミナを3割回復（最大まで）
+        k.w = Math.min(Math.max(k.w0, k.w), k.w + (k.w0 - OMEGA_MIN) * .3);
         B.events.push([T.indexOf(k), 'hunter']);
       }
     }
@@ -978,7 +981,7 @@ const PASSIVES = {
   guts:    { name: '根性',       desc: '場外以外で倒れるとき、1回だけスタミナ1割で踏みとどまる' },
   heavy:   { name: '重装',       desc: '重さが1.3倍になるかわりに、最初の回転が1割少なく、減りも少し速い' },
   rubber:  { name: 'ゴム壁',     desc: '壁に当たっても回転を失わず、強く跳ね返り、回転を少し取り戻す。ポケットに入っても落ちにくい' },
-  hunter:  { name: 'ハンター',   desc: '相手を倒すたびにスタミナを2割回復する（最後にぶつかった人が倒したことになる。8秒以内）' },
+  hunter:  { name: 'ハンター',   desc: '自分よりスタミナが少ない相手には、弾く力1.4倍・回転を削る量1.5倍。倒すたびにスタミナを3割回復する（最後にぶつかった人が倒したことになる。8秒以内）' },
   comeback:{ name: '逆境',       desc: 'スタミナが5割を切ると、ぶつけた相手を2倍強く弾き、受ける衝撃は3分の2、回転の減りも7割になる' },
 };
 const PASSIVE_IDS = Object.keys(PASSIVES);
@@ -988,6 +991,8 @@ const stamina = t => clamp01((t.w - OMEGA_MIN) / (t.w0 - OMEGA_MIN));
 const lowComeback = t => t.passive === 'comeback' && stamina(t) < .5;
 const hitPower = t => (t.dash > 0 || t.hyper > 0 || lowComeback(t)) ? 2 : 1;
 // 受ける衝撃の倍率（ダッシュ中は6割5分、操縦中は8割、逆境で弱っているときは3分の2）
+// パッシブ「ハンター」：自分よりスタミナが少ない相手を1.4倍強く弾く（追い込み）
+const hunterK = (att, tgt) => att.passive === 'hunter' && stamina(tgt) < stamina(att) ? 1.4 : 1;
 const takeK = t => (t.dash > 0 ? .65 : t.steer > 0 ? .8 : 1) * (lowComeback(t) ? .67 : 1);
 // after：試合開始から何秒たてば使えるか（指定がなければ1秒後から）
 const skillLimit = id => (SKILLS[id].cd ? `クールダウン${SKILLS[id].cd}秒` : `1試合${SKILLS[id].uses}回まで`) + (SKILLS[id].after ? `・開始${SKILLS[id].after}秒後から` : '');
@@ -1365,7 +1370,7 @@ function renderCards(box, ids, defs, current, meta, onPick) {
   }
 }
 const skillMeta = id => SKILLS[id].cd ? `CD ${SKILLS[id].cd}秒` : `${SKILLS[id].uses}回` + (SKILLS[id].after ? `・${SKILLS[id].after}秒後〜` : '');
-const PASSIVE_TAG = { none: '—', revive: '1回', drain: '常時', guts: '1回', heavy: '常時', rubber: '常時', hunter: '撃破時', comeback: '5割未満' };
+const PASSIVE_TAG = { none: '—', revive: '1回', drain: '常時', guts: '1回', heavy: '常時', rubber: '常時', hunter: '追い込み', comeback: '5割未満' };
 function renderSkills() {
   renderCards($('skills'), SKILL_IDS, SKILLS, S.skill, skillMeta, id => {
     S.skill = id; store.set('mg.skill', id); renderSkills();
