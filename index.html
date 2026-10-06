@@ -699,13 +699,65 @@ const G = 9.8;
 // ws は壁の回る速さ（ラジアン／秒。負なら逆向き）、pillar は中央の柱の半径（0なら柱なし）
 // 壁は対戦中に回る（ポケットの位置も一緒に動く）
 const pocketsOf = n => Array.from({ length: n }, (_, i) => Math.PI / 2 + i * Math.PI * 2 / n);
+// 正多角形・星形の頂点（x, z）。a0 は最初の頂点の角度
+const polyVerts = (n, r, a0) => Array.from({ length: n }, (_, i) => { const a = a0 + i * Math.PI * 2 / n; return [Math.cos(a) * r, Math.sin(a) * r]; });
+const starVerts = (n, ro, ri, a0) => Array.from({ length: n * 2 }, (_, i) => { const a = a0 + i * Math.PI / n, r = i % 2 ? ri : ro; return [Math.cos(a) * r, Math.sin(a) * r]; });
+// 加速帯：半径 r の円周上に n 枚、左回りの向きに置く（L は長さ、W は幅）
+const padsOn = (n, r, L, W) => Array.from({ length: n }, (_, i) => {
+  const a = Math.PI / 4 + i * Math.PI * 2 / n;
+  return { x: Math.cos(a) * r, z: Math.sin(a) * r, dx: -Math.sin(a), dz: Math.cos(a), L, W };
+});
+// 多角形の壁を、辺ごとの線分（内向きの法線・ポケットの切れ目つき）にしておく
+function prepField(f) {
+  if (!f.verts) return;
+  const V = f.verts, n = V.length, hole = new Set(f.holes || []);
+  f.segs = V.map((a, i) => {
+    const b = V[(i + 1) % n], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const dx = (b[0] - a[0]) / len, dz = (b[1] - a[1]) / len;
+    let nx = -dz, nz = dx;
+    if (nx * -a[0] + nz * -a[1] < 0) { nx = -nx; nz = -nz; }   // 中心の側を向く法線
+    return { ax: a[0], az: a[1], dx, dz, len, nx, nz, g0: hole.has(i) ? f.gap : 0, g1: hole.has((i + 1) % n) ? f.gap : 0 };
+  });
+}
+// 中心から角度 a の向きに進んだとき、多角形の壁までの距離（床を作るのに使う）
+function polyRadius(f, a) {
+  const cx = Math.cos(a), cz = Math.sin(a);
+  let best = Infinity;
+  for (const sg of f.segs) {
+    const den = cx * sg.dz - cz * sg.dx;
+    if (Math.abs(den) < 1e-9) continue;
+    const t = (sg.ax * sg.dz - sg.az * sg.dx) / den, u = (sg.ax * cz - sg.az * cx) / den;
+    if (t > 0 && u >= -1e-6 && u <= sg.len + 1e-6) best = Math.min(best, t);
+  }
+  return best;
+}
+function insidePoly(V, x, z) {
+  let c = false;
+  for (let i = 0, j = V.length - 1; i < V.length; j = i++) {
+    const [xi, zi] = V[i], [xj, zj] = V[j];
+    if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) c = !c;
+  }
+  return c;
+}
 const FIELDS = {
   std:    { name: '標準',     tag: '3穴',     desc: 'すり鉢に3つのポケット。壁はゆっくり回る', R: 5.5, k: .045, pockets: pocketsOf(3), pw: .30, ws: .35, pillar: 0 },
   wide:   { name: '大皿',     tag: '広い・4穴', desc: '広くて浅い。4つのポケットは狭く、壁もゆっくり。長期戦になりやすい', R: 7, k: .032, pockets: pocketsOf(4), pw: .22, ws: .25, pillar: 0 },
   small:  { name: '小皿',     tag: '狭い・2穴', desc: '狭くて深い。向かい合う大きなポケットが2つ、壁は速く回る。ぶつかり合いが多い', R: 4.8, k: .07, pockets: pocketsOf(2), pw: .30, ws: .45, pillar: 0 },
   pillar: { name: '中央柱',   tag: '柱・3穴', desc: '中央に柱が立つ。柱に当たると跳ね返り、回転が少し減る', R: 5.8, k: .045, pockets: pocketsOf(3), pw: .30, ws: .35, pillar: .75 },
   holes:  { name: '穴だらけ', tag: '6穴・逆回転', desc: '小さなポケットが6つ。壁は逆向きに少し速く回る', R: 5.5, k: .045, pockets: pocketsOf(6), pw: .20, ws: -.45, pillar: 0 },
+  // 多角形のステージ：verts は壁の頂点（壁と一緒に回る座標）、holes はポケットになる頂点の番号、gap はその頂点から両側の壁を何mあけるか
+  tri:    { name: '三角',     tag: '角3穴',   desc: '三角形の土俵。3つの角がポケット。辺の中央は中心に近く、押し込まれやすい', R: 4.6, Rout: 7.4, startR: 2.5, k: .02, ws: .22,
+            verts: polyVerts(3, 7.4, Math.PI / 2), holes: [0, 1, 2], gap: 2.2 },
+  square: { name: '四角',     tag: '角4穴',   desc: '四角い土俵。4つの角がポケット。回る壁の角に弾かれる', R: 5.2, Rout: 6.8, startR: 3, k: .022, ws: .25,
+            verts: polyVerts(4, 6.8, Math.PI / 4), holes: [0, 1, 2, 3], gap: 1.7 },
+  star:   { name: '星',       tag: '内角5穴', desc: '星形の土俵。内側に出っ張った5つの角がポケット。先端に逃げ込むと落ちにくいが、回転を削られやすい', R: 4.4, Rout: 7, startR: 2.4, k: .03, ws: .2,
+            verts: starVerts(5, 7, 3.4, Math.PI / 2), holes: [1, 3, 5, 7, 9], gap: .8 },
+  boost:  { name: '加速帯',   tag: '加速4枚', desc: '床に加速帯が4枚。乗ると矢印の向きに一気に加速する。ポケットは3つ', R: 5.8, k: .045, pockets: pocketsOf(3), pw: .30, ws: .35, pillar: 0,
+            pads: padsOn(4, 3.3, 2.2, 1.1) },
 };
+// 加速帯の加速度（m/s²）
+const PAD_ACC = 16;
+for (const f of Object.values(FIELDS)) prepField(f);
 const FIELD_IDS = Object.keys(FIELDS);
 let FIELD = FIELDS.std, FIELD_ID = 'std';
 const WALL = { phase: 0 };
@@ -740,6 +792,81 @@ function makeTop(g, x, z, power, side, angle, skill, passive) {
            state: 'spin', y: 0, tilt: 0, prec: 0, fall: 0,
            skill: sk, cdUntil: SKILLS[sk].after || 1, uses: SKILLS[sk].uses || Infinity, guard: 0, dash: 0, hyper: 0,
            steer: 0, boost: 0, boostAdd: 0, passive: pv, massK: pv === 'heavy' ? 1.3 : 1, revived: false, gutsUsed: false, evt: null };
+}
+
+// 場外に落ちる（パッシブ「リスポーン」は1回だけ、落ちる前と同じ回転のまま中央付近に戻る）
+function fallOut(t) {
+  if (t.passive === 'revive' && !t.revived) {
+    t.revived = true;
+    const a = Math.random() * Math.PI * 2;
+    t.x = Math.cos(a) * .8; t.z = Math.sin(a) * .8; t.vx = t.vz = 0;
+    t.evt = 'revive';
+  } else { t.state = 'out'; t.vy = 1; t.reason = '場外'; }
+}
+// 壁に当たったときの跳ね返り。(nx, nz) は壁の外向きの法線、vn は壁へ向かう速さ（壁の動きを差し引いた値）
+function wallBounce(t, nx, nz, vn, hyper, push) {
+  const rubber = t.passive === 'rubber';
+  t.vx -= (rubber ? 2 : 1.65) * vn * nx; t.vz -= (rubber ? 2 : 1.65) * vn * nz;
+  // パッシブ「ゴム壁」：壁に当たるたびに回転を5%取り戻す（壁に押し付けられている間に連続で回復しないよう0.5秒に1回まで）
+  if (rubber && vn > .8 && !(SIM.t - (t.rubberAt ?? -9) < .5)) { t.rubberAt = SIM.t; t.w = Math.min(t.w0, t.w + t.w0 * .05); }
+  // 壁との擦れで回転を失い、横に弾かれる。壁が回っているので、その向きにも少し押される
+  t.vx += -nz * (t.w * .02 + push); t.vz += nx * (t.w * .02 + push);
+  if (!hyper && !rubber) t.w -= Math.min(t.w * .06, vn * 1.2);   // パッシブ「ゴム壁」は壁で回転を失わない
+  t.hitWall = vn;
+}
+// 丸いステージ：ポケットの角度の範囲だけ壁がない
+function wallCircle(t, hyper, reach) {
+  const r2 = Math.hypot(t.x, t.z);
+  const ang = Math.atan2(t.z, t.x);
+  const inPocket = FIELD.pockets.some(p0 => { const p = p0 + WALL.phase; return Math.abs(Math.atan2(Math.sin(ang - p), Math.cos(ang - p))) < FIELD.pw; });
+  if (inPocket && !hyper) {   // ハイパー無敵中はポケットも壁として跳ね返る
+    if (r2 > FIELD.R + (t.passive === 'rubber' ? 1 : .15)) fallOut(t);   // ゴム壁は縁で粘る
+  } else if (r2 + reach > FIELD.R) {
+    const nx = t.x / r2, nz = t.z / r2;
+    const vn = t.vx * nx + t.vz * nz;
+    if (vn > 0) wallBounce(t, nx, nz, vn, hyper, FIELD.ws * FIELD.R * .25);
+    t.x = nx * (FIELD.R - reach); t.z = nz * (FIELD.R - reach);
+  }
+}
+// 多角形のステージ：壁と一緒に回る座標で、いちばん近い辺との距離を調べる
+function wallPoly(t, hyper, reach) {
+  const c = Math.cos(WALL.phase), s = Math.sin(WALL.phase);
+  const toWorld = (x, z) => [x * c - z * s, x * s + z * c];
+  const closest = (px, pz, solidOnly) => {
+    let best = null;
+    for (const sg of FIELD.segs) {
+      const pr = Math.max(0, Math.min(sg.len, (px - sg.ax) * sg.dx + (pz - sg.az) * sg.dz));
+      const gap = !hyper && (pr < sg.g0 || pr > sg.len - sg.g1);   // ハイパー無敵中はポケットも壁になる
+      if (solidOnly && gap) continue;
+      const qx = sg.ax + sg.dx * pr, qz = sg.az + sg.dz * pr, d = Math.hypot(px - qx, pz - qz);
+      if (!best || d < best.d) best = { qx, qz, d, gap, sg };
+    }
+    return best;
+  };
+  // 当たった点 q で、点 p から壁の内側（inX, inZ 向き）へ押し戻して跳ね返す
+  const hit = (qx, qz, inX, inZ) => {
+    const [nx, nz] = toWorld(-inX, -inZ), [wx, wz] = toWorld(qx, qz);
+    // 回る壁の、その点での速さを差し引いて当たりの強さを決める（回る角に押されて弾かれる）
+    const vwx = -FIELD.ws * wz, vwz = FIELD.ws * wx;
+    const vn = (t.vx - vwx) * nx + (t.vz - vwz) * nz;
+    if (vn > 0) wallBounce(t, nx, nz, vn, hyper, 0);
+    t.x = wx - nx * reach; t.z = wz - nz * reach;
+  };
+  for (let k = 0; k < 2; k++) {   // 角では2辺に同時に触れることがあるので2回まで
+    const px = t.x * c + t.z * s, pz = -t.x * s + t.z * c;
+    if (insidePoly(FIELD.verts, px, pz)) {
+      const b = closest(px, pz, true);
+      if (!b || b.d >= reach) return;
+      const inX = b.d > 1e-6 ? (px - b.qx) / b.d : b.sg.nx, inZ = b.d > 1e-6 ? (pz - b.qz) / b.d : b.sg.nz;
+      hit(b.qx, b.qz, inX, inZ);
+    } else {
+      const b = closest(px, pz, false);
+      if (!b) return;
+      if (b.gap) { if (b.d > (t.passive === 'rubber' ? 1 : .15)) fallOut(t); return; }   // ポケットから外へ
+      const inX = b.d > 1e-6 ? -(px - b.qx) / b.d : b.sg.nx, inZ = b.d > 1e-6 ? -(pz - b.qz) / b.d : b.sg.nz;
+      hit(b.qx, b.qz, inX, inZ);
+    }
+  }
 }
 
 function stepTop(t, dt) {
@@ -786,34 +913,14 @@ function stepTop(t, dt) {
   t.x += t.vx * dt; t.z += t.vz * dt;
 
   // 壁とポケット
-  const r2 = Math.hypot(t.x, t.z);
-  const ang = Math.atan2(t.z, t.x);
-  const inPocket = FIELD.pockets.some(p0 => { const p = p0 + WALL.phase; return Math.abs(Math.atan2(Math.sin(ang - p), Math.cos(ang - p))) < FIELD.pw; });
   const reach = t.g.maxR * .75;
-  if (inPocket && !hyper) {   // ハイパー無敵中はポケットも壁として跳ね返る
-    if (r2 > FIELD.R + (t.passive === 'rubber' ? 1 : .15)) {   // ゴム壁は縁で粘る
-      if (t.passive === 'revive' && !t.revived) {
-        // パッシブ「リスポーン」：1回だけ、落ちる前と同じ回転のまま中央付近に戻る
-        t.revived = true;
-        const a = Math.random() * Math.PI * 2;
-        t.x = Math.cos(a) * .8; t.z = Math.sin(a) * .8; t.vx = t.vz = 0;
-        t.evt = 'revive';
-      } else { t.state = 'out'; t.vy = 1; t.reason = '場外'; }
+  if (FIELD.segs) wallPoly(t, hyper, reach); else wallCircle(t, hyper, reach);
+  // 加速帯：乗っている間、矢印の向きに加速する
+  if (FIELD.pads && t.state === 'spin') for (const p of FIELD.pads) {
+    const ex = t.x - p.x, ez = t.z - p.z;
+    if (Math.abs(ex * p.dx + ez * p.dz) < p.L / 2 && Math.abs(-ex * p.dz + ez * p.dx) < p.W / 2) {
+      t.vx += p.dx * PAD_ACC * dt; t.vz += p.dz * PAD_ACC * dt;
     }
-  } else if (r2 + reach > FIELD.R) {
-    const nx = t.x / r2, nz = t.z / r2;
-    const vn = t.vx * nx + t.vz * nz;
-    if (vn > 0) {
-      const rubber = t.passive === 'rubber';
-      t.vx -= (rubber ? 2 : 1.65) * vn * nx; t.vz -= (rubber ? 2 : 1.65) * vn * nz;
-      // パッシブ「ゴム壁」：壁に当たるたびに回転を5%取り戻す（壁に押し付けられている間に連続で回復しないよう0.5秒に1回まで）
-      if (rubber && vn > .8 && !(SIM.t - (t.rubberAt ?? -9) < .5)) { t.rubberAt = SIM.t; t.w = Math.min(t.w0, t.w + t.w0 * .05); }
-      // 壁との擦れで回転を失い、横に弾かれる。壁が回っているので、その向きにも少し押される
-      t.vx += -nz * (t.w * .02 + FIELD.ws * FIELD.R * .25); t.vz += nx * (t.w * .02 + FIELD.ws * FIELD.R * .25);
-      if (!hyper && !rubber) t.w -= Math.min(t.w * .06, vn * 1.2);   // パッシブ「ゴム壁」は壁で回転を失わない
-      t.hitWall = vn;
-    }
-    t.x = nx * (FIELD.R - reach); t.z = nz * (FIELD.R - reach);
   }
   // 中央の柱：外向きに跳ね返し、当たった強さに応じて回転が少し減る
   if (FIELD.pillar) {
@@ -920,7 +1027,7 @@ function collide(a, b) {
 
 // 発射位置：人数に応じて円周上に等間隔に並べる（2人なら左手前と右奥）
 function startPos(i, n) {
-  const a = Math.PI - .36 + i * Math.PI * 2 / n, r = FIELD.R * .62;
+  const a = Math.PI - .36 + i * Math.PI * 2 / n, r = FIELD.startR || FIELD.R * .62;
   return [Math.cos(a) * r, Math.sin(a) * r];
 }
 // entries: [{ g, p, a, gone }]。p は強さ（0〜1）、a は射出角、gone は最初から不参加（退出済み）
@@ -1170,18 +1277,46 @@ const lineMat = new THREE.LineBasicMaterial({ color: 0x7a5a2e, transparent: true
 const wallMat = new THREE.MeshStandardMaterial({ color: 0x2b375e, roughness: .5, metalness: .2, side: THREE.DoubleSide });
 const capMat = new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: .35, metalness: .6 });
 const underMat = new THREE.MeshBasicMaterial({ color: 0x0b1020 });
+const capMat2 = new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: .35, metalness: .6, side: THREE.DoubleSide });
+// 加速帯の矢印（テクスチャを流して動いて見せる）
+const padTex = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+  const x = c.getContext('2d');
+  x.fillStyle = 'rgba(40,200,255,.35)'; x.fillRect(0, 0, 256, 64);
+  x.fillStyle = 'rgba(200,250,255,.95)';
+  for (let i = 0; i < 4; i++) {
+    const o = i * 64;
+    x.beginPath(); x.moveTo(o + 14, 8); x.lineTo(o + 40, 32); x.lineTo(o + 14, 56); x.lineTo(o + 28, 56); x.lineTo(o + 54, 32); x.lineTo(o + 28, 8); x.closePath(); x.fill();
+  }
+  const t = new THREE.CanvasTexture(c); t.wrapS = THREE.RepeatWrapping;
+  return t;
+})();
+const padMat = new THREE.MeshBasicMaterial({ map: padTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
 // いまのステージ（FIELD）に合わせて、すり鉢・壁・柱を作り直す
 function buildArena() {
   for (const g of [arenaGroup, wallGroup]) {
     for (const o of [...g.children]) { g.remove(o); if (o.geometry) o.geometry.dispose(); }
   }
-  const R = FIELD.R;
-  const prof = [];
-  for (let i = 0; i <= 24; i++) { const r = R * i / 24; prof.push(new THREE.Vector2(r, height(r))); }
-  prof.push(new THREE.Vector2(R + .01, height(R)));
-  arenaGroup.add(new THREE.Mesh(new THREE.LatheGeometry(prof, 96), bowlMat));
+  const R = FIELD.R, Rout = FIELD.Rout || R;
+  if (FIELD.segs) buildPolyArena(); else {
+    const prof = [];
+    for (let i = 0; i <= 24; i++) { const r = R * i / 24; prof.push(new THREE.Vector2(r, height(r))); }
+    prof.push(new THREE.Vector2(R + .01, height(R)));
+    arenaGroup.add(new THREE.Mesh(new THREE.LatheGeometry(prof, 96), bowlMat));
+    // 壁（ポケット部分は切れている）。壁はまとめて回すので wallGroup に入れる（rotation.y = -WALL.phase でポケットの位置と合う）
+    const P = FIELD.pockets, segs = P.length;
+    for (let s = 0; s < segs; s++) {
+      const a0 = P[s] + FIELD.pw, a1 = P[(s + 1) % segs] - FIELD.pw + (s === segs - 1 ? Math.PI * 2 : 0);
+      // three.js の CylinderGeometry は θ を z→x 方向に測るので、atan2(z, x) の角度から変換する
+      const geo = new THREE.CylinderGeometry(R + .25, R + .25, .55, 64, 1, true, Math.PI / 2 - a1, a1 - a0);
+      const wall = new THREE.Mesh(geo, wallMat);
+      wall.position.y = height(R) + .2; wallGroup.add(wall);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(R + .25, .06, 8, 64, a1 - a0), capMat);
+      rim.rotation.x = Math.PI / 2; rim.rotation.z = a0; rim.position.y = height(R) + .48; wallGroup.add(rim);
+    }
+  }
   // 中心の円（土俵の仕切り線に相当）
-  for (const rr of [R * .22, R * .58]) {
+  for (const rr of FIELD.segs ? [R * .22] : [R * .22, R * .58]) {
     if (rr < FIELD.pillar + .1) continue;
     const pts = [];
     for (let i = 0; i <= 96; i++) { const a = i / 96 * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * rr, height(rr) + .01, Math.sin(a) * rr)); }
@@ -1194,21 +1329,70 @@ function buildArena() {
     const cap = new THREE.Mesh(new THREE.TorusGeometry(FIELD.pillar, .06, 8, 40), capMat);
     cap.rotation.x = Math.PI / 2; cap.position.y = .6; arenaGroup.add(cap);
   }
-  // 壁（ポケット部分は切れている）。壁はまとめて回すので wallGroup に入れる（rotation.y = -WALL.phase でポケットの位置と合う）
-  const P = FIELD.pockets, segs = P.length;
-  for (let s = 0; s < segs; s++) {
-    const a0 = P[s] + FIELD.pw, a1 = P[(s + 1) % segs] - FIELD.pw + (s === segs - 1 ? Math.PI * 2 : 0);
-    // three.js の CylinderGeometry は θ を z→x 方向に測るので、atan2(z, x) の角度から変換する
-    const geo = new THREE.CylinderGeometry(R + .25, R + .25, .55, 64, 1, true, Math.PI / 2 - a1, a1 - a0);
-    const wall = new THREE.Mesh(geo, wallMat);
-    wall.position.y = height(R) + .2; wallGroup.add(wall);
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(R + .25, .06, 8, 64, a1 - a0), capMat);
-    rim.rotation.x = Math.PI / 2; rim.rotation.z = a0; rim.position.y = height(R) + .48; wallGroup.add(rim);
+  // 加速帯：床の曲がりに沿わせた板に、流れる矢印を貼る
+  if (FIELD.pads) for (const p of FIELD.pads) {
+    const NU = 8, NV = 3, pos = [], uv = [], idx = [];
+    for (let i = 0; i <= NU; i++) for (let j = 0; j <= NV; j++) {
+      const u = (i / NU - .5) * p.L, v = (j / NV - .5) * p.W;
+      const x = p.x + p.dx * u - p.dz * v, z = p.z + p.dz * u + p.dx * v;
+      pos.push(x, height(Math.hypot(x, z)) + .025, z); uv.push(i / NU, j / NV);
+    }
+    for (let i = 0; i < NU; i++) for (let j = 0; j < NV; j++) {
+      const k = i * (NV + 1) + j;
+      idx.push(k, k + NV + 1, k + 1, k + 1, k + NV + 1, k + NV + 2);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx);
+    arenaGroup.add(new THREE.Mesh(geo, padMat));
   }
   // 床下の影
-  const under = new THREE.Mesh(new THREE.CircleGeometry(R + 3, 64), underMat);
+  const under = new THREE.Mesh(new THREE.CircleGeometry(Rout + 3, 64), underMat);
   under.rotation.x = -Math.PI / 2; under.position.y = -2.5; arenaGroup.add(under);
 }
+// 多角形のステージ：床は中心から壁までを放射状に分けた網で作り、壁ごと回す
+function buildPolyArena() {
+  const A = [];
+  for (let i = 0; i < 192; i++) A.push(i / 192 * Math.PI * 2);
+  for (const [x, z] of FIELD.verts) A.push((Math.atan2(z, x) + Math.PI * 2) % (Math.PI * 2));   // 角をきちんと尖らせる
+  A.sort((a, b) => a - b);
+  const RINGS = 20, pos = [], uv = [], idx = [];
+  pos.push(0, height(0), 0); uv.push(.5, .5);
+  for (const a of A) {
+    const rb = polyRadius(FIELD, a);
+    for (let k = 1; k <= RINGS; k++) {
+      const r = rb * k / RINGS, x = Math.cos(a) * r, z = Math.sin(a) * r;
+      pos.push(x, height(r), z); uv.push(x / 6 + .5, z / 6 + .5);
+    }
+  }
+  const n = A.length, at = (i, k) => 1 + (i % n) * RINGS + (k - 1);
+  for (let i = 0; i < n; i++) {
+    idx.push(0, at(i + 1, 1), at(i, 1));
+    for (let k = 1; k < RINGS; k++) idx.push(at(i, k), at(i + 1, k), at(i, k + 1), at(i + 1, k), at(i + 1, k + 1), at(i, k + 1));
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx);
+  geo.computeVertexNormals();
+  wallGroup.add(new THREE.Mesh(geo, bowlMat));
+  // 壁：ポケットの切れ目を除いた部分を、床の高さに沿った帯で立てる（少し外側に置く）
+  for (const sg of FIELD.segs) {
+    const from = sg.g0, to = sg.len - sg.g1;
+    if (to - from < .05) continue;
+    const N = Math.max(2, Math.ceil((to - from) / .3)), wp = [], wi = [], cp = [], ci = [];
+    for (let i = 0; i <= N; i++) {
+      const d = from + (to - from) * i / N;
+      const x = sg.ax + sg.dx * d - sg.nx * .15, z = sg.az + sg.dz * d - sg.nz * .15, h = height(Math.hypot(x, z));
+      wp.push(x, h - .15, z, x, h + .45, z);
+      cp.push(x + sg.nx * .07, h + .47, z + sg.nz * .07, x - sg.nx * .07, h + .47, z - sg.nz * .07);
+      if (i < N) { const k = i * 2; wi.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); ci.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
+    }
+    for (const [P, I, M] of [[wp, wi, wallMat], [cp, ci, capMat]]) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setIndex(I); g.computeVertexNormals();
+      const m = new THREE.Mesh(g, M === capMat ? capMat2 : M); wallGroup.add(m);
+    }
+  }
+}
+
 buildArena();
 
 // コマのメッシュ：文字の板を何層も重ねて厚みを出す
@@ -1330,7 +1514,7 @@ function clink(power) {
 function placeMesh(m, t) {
   const r = Math.hypot(t.x, t.z);
   // 中央柱のステージで柱の上にいる（待機中の見本のコマ）ときは、柱の上に載せる
-  m.root.position.set(t.x, height(Math.min(r, FIELD.R)) + t.y + (r < FIELD.pillar ? .6 : 0), t.z);
+  m.root.position.set(t.x, height(Math.min(r, FIELD.Rout || FIELD.R)) + t.y + (r < FIELD.pillar ? .6 : 0), t.z);
   m.spin.rotation.y = t.th;
   const sr = clamp01(t.w / t.w0);
   t.prec += (2 + 6 * (1 - sr)) / 60;
@@ -1345,7 +1529,7 @@ function resize() {
   if (renderer) { renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.setSize(w, h, false); }
   camera.aspect = w / h;
   // スタジアム全体（半径＋余白）が横幅に収まる距離をとる。標準より小さいステージは寄らずに小さく見せる
-  const fitH = (Math.max(FIELD.R, 5.5) + 2.1) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const fitH = (Math.max(FIELD.Rout || FIELD.R, 5.5) + 2.1) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const fitW = fitH / Math.min(1, camera.aspect);
   const dist = Math.max(13, fitW * .95);
   camera.position.set(0, dist * .78, dist * .62);
@@ -1998,7 +2182,7 @@ const ON = {
 };
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 // 通信の取り決めの版。ページを更新して中身が変わったら上げる（版が違う人どうしは試合を始められない）
-const PROTO = 8;
+const PROTO = 9;
 
 // ほかの人から届く値はすべて信用せず、型と範囲を確かめてから使う
 const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
@@ -3176,6 +3360,7 @@ function frame(now) {
   if (S.battle && (S.mode === 'battle' || S.mode === 'result')) wallGroup.rotation.y = -S.battle.t * FIELD.ws;
   else if (S.mode === 'idle') wallGroup.rotation.y = -now / 1000 * FIELD.ws * .5;
   else wallGroup.rotation.y = 0;
+  if (FIELD.pads) padTex.offset.x = (padTex.offset.x - dt * 1.2) % 1;
   stepSparks(dt);
   if (renderer) renderer.render(scene, camera);
   requestAnimationFrame(frame);
