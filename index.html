@@ -2416,7 +2416,14 @@ function selectTab(which) {
 // ───────── アカウント（Firebase） ─────────
 // Firebase コンソール →「プロジェクトの設定」→「マイアプリ（ウェブ）」の firebaseConfig をここに入れる。
 // これは公開してよい値で、データは firestore.rules の規則で守る。null のあいだはアカウントとレート戦を使わない
-const FIREBASE_CONFIG = null;
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyCx4UrTZROF9dtI3eDaSxerHrYfVnGqdGw',
+  authDomain: 'mojicoma-c01af.firebaseapp.com',
+  projectId: 'mojicoma-c01af',
+  storageBucket: 'mojicoma-c01af.firebasestorage.app',
+  messagingSenderId: '481543971771',
+  appId: '1:481543971771:web:56ae03d6e03b76f7595a9e',
+};
 const FB_VER = '12.19.0';
 // state：off（使えない）| loading | out（未ログイン）| needId（ID 未登録）| in（ログイン済み）
 const ACC = { auth: null, db: null, user: null, prof: null, unsub: null, state: 'off', why: '', registering: false };
