@@ -23,6 +23,9 @@
   --foe2: #7fcf8a;        /* 3人目 */
   --foe3: #c49af2;        /* 4人目 */
   --ok: #6cc08b;          /* 準備OK */
+  --dim: #c9c3b5;         /* 本文より一段控えめな文字（未選択の項目など） */
+  --raise: #222c4f;       /* 選択肢カードの地 */
+  --bad: #e86a6a;         /* 負け・エラー */
   --font-display: "Dela Gothic One", "Hiragino Sans", "Yu Gothic", sans-serif;
   --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
   color-scheme: dark;
@@ -61,10 +64,10 @@ button { cursor: pointer; }
 @media (min-width: 1100px) {
   body:not(.playing) #arena { left: 772px; }
 }
-.soundbtn { font-size: 12px; padding: 3px 10px; }
+.soundbtn { font-size: 12px; padding: 3px 10px; white-space: nowrap; }
 .soundbtn[aria-pressed="false"] { color: var(--muted); }
-.brand { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.brand h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 24px; letter-spacing: .04em; }
+.brand { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.brand h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 22px; letter-spacing: .04em; white-space: nowrap; }
 .brand small { color: var(--muted); font-size: 12px; }
 .label { font-size: 11px; letter-spacing: .14em; color: var(--muted); }
 
@@ -92,6 +95,87 @@ button { cursor: pointer; }
   padding: 4px 10px; font-size: 13px; color: var(--paper);
 }
 .chip[aria-pressed="true"] { border-color: var(--brass); color: var(--brass); }
+
+/* ── 強弱の決まり ──
+   強く見せる：文字そのもの・選んでいるもの・数値（性能値やレート）・主ボタン（真鍮）
+   弱く見せる：見出し（小さく字間を空ける）・補足（muted）・選んでいない項目（dim） */
+.sechead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.sechead .hint { font-size: 11px; color: var(--muted); }
+.tag { font-size: 12px; color: var(--brass); border: 1px solid color-mix(in srgb, var(--brass) 45%, transparent); border-radius: 999px; padding: 1px 10px; white-space: nowrap; }
+.desc { margin: 0; font-size: 12px; color: var(--dim); min-height: 2.8em; padding-left: 10px; border-left: 2px solid var(--brass); }
+.mini { font-size: 11px; color: var(--muted); }
+button.mini { font-size: 11px; padding: 2px 8px; }
+
+/* 選択肢カード（アビリティ・パッシブ） */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.opt { position: relative; text-align: left; background: var(--raise); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px 6px; display: grid; gap: 1px; color: var(--dim); transition: border-color .15s, background .15s, transform .15s; }
+.opt b { font-size: 13px; font-weight: 700; line-height: 1.3; }
+.opt small { font-size: 10.5px; color: var(--muted); letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+.opt:hover { border-color: color-mix(in srgb, var(--brass) 50%, var(--line)); }
+.opt[aria-checked="true"] { color: var(--paper); border-color: var(--brass); background: color-mix(in srgb, var(--brass) 14%, var(--raise)); box-shadow: inset 0 0 0 1px var(--brass); }
+.opt[aria-checked="true"] small { color: var(--brass); }
+.opt[aria-checked="true"]::after { content: "✓"; position: absolute; top: 5px; right: 8px; font-size: 11px; color: var(--brass); }
+.opt.ult b { background: linear-gradient(90deg, var(--brass), var(--you)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+/* 形を変えるコントロール */
+.shape { display: flex; flex-direction: column; gap: 6px; }
+.shapectl { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: start; }
+.dpad { display: grid; grid-template-columns: repeat(3, 34px); grid-template-rows: repeat(3, 30px); gap: 3px; }
+.pad { background: var(--raise); border: 1px solid var(--line); border-radius: 6px; color: var(--paper); font-size: 15px; padding: 0; }
+.pad:hover { border-color: var(--brass); }
+.pad.up { grid-column: 2; grid-row: 1; } .pad.left { grid-column: 1; grid-row: 2; } .pad.mid { grid-column: 2; grid-row: 2; font-size: 10px; color: var(--muted); }
+.pad.right { grid-column: 3; grid-row: 2; } .pad.down { grid-column: 2; grid-row: 3; }
+.shapeside { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { background: var(--raise); border: 0; padding: 5px 4px; font-size: 12px; color: var(--dim); }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: color-mix(in srgb, var(--brass) 18%, var(--raise)); color: var(--brass); }
+
+/* 見出し右上：アカウント */
+.brandtools { display: flex; gap: 6px; align-items: center; }
+.acctbtn { background: transparent; border: 1px solid var(--brass); color: var(--brass); border-radius: 999px; padding: 3px 12px; font-size: 12px; max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; align-items: baseline; }
+.acctbtn span { overflow: hidden; text-overflow: ellipsis; }
+.acctbtn.in { border-color: var(--line); color: var(--paper); }
+.acctbtn.in b { color: var(--brass); font-variant-numeric: tabular-nums; margin-left: 6px; }
+
+/* レート戦 */
+.rtnote { font-size: 12px; color: var(--muted); }
+.rtcard { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 8px; background: var(--raise); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+.rtcard > div { display: flex; flex-direction: column; min-width: 0; }
+.rtcard b { font-size: 16px; overflow-wrap: anywhere; }
+.rtrate b { font-family: var(--font-display); font-weight: 400; font-size: 26px; color: var(--brass); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.rtrec span:last-child { font-size: 13px; font-variant-numeric: tabular-nums; }
+.rtsearch { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.rtsearch #rtStatusText { flex: 1; min-width: 0; }
+.spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--brass); animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ranking { display: flex; flex-direction: column; gap: 6px; }
+.rklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; }
+.rklist li { display: grid; grid-template-columns: 2.2em 1fr auto auto; gap: 10px; align-items: baseline; padding: 4px 8px; border-radius: 4px; font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.rklist li .rk { color: var(--muted); text-align: right; }
+.rklist li .rr { color: var(--paper); font-weight: 700; }
+.rklist li .wl { font-size: 11px; color: var(--muted); }
+.rklist li.top .rk { color: var(--brass); font-weight: 700; }
+.rklist li.me { background: color-mix(in srgb, var(--brass) 14%, transparent); color: var(--paper); }
+.rklist li.empty { display: block; color: var(--muted); }
+.rtbanner { display: grid; gap: 4px; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--brass); background: color-mix(in srgb, var(--brass) 10%, transparent); }
+.rtbanner b { font-size: 15px; }
+.rtbanner .count { font-family: var(--font-display); font-size: 22px; color: var(--brass); font-variant-numeric: tabular-nums; }
+.ratechg { font-family: var(--font-display); font-size: 20px; font-variant-numeric: tabular-nums; }
+.ratechg.up { color: var(--ok); } .ratechg.down { color: var(--bad); }
+
+/* アカウントの画面 */
+.modal { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; background: color-mix(in srgb, var(--ink) 70%, transparent); }
+.card.acctcard { text-align: left; width: min(360px, 100%); max-height: calc(100% - 32px); overflow-y: auto; gap: 12px; }
+#acctOut, #acctNew, #acctIn { display: flex; flex-direction: column; gap: 12px; }
+.form { display: flex; flex-direction: column; gap: 6px; }
+.form input { background: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; min-width: 0; }
+.form input:focus { border-color: var(--brass); outline: none; }
+.gbtn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; background: #fff; color: #1f1f1f; border: 0; border-radius: 4px; padding: 10px; font-weight: 700; }
+.gbtn .g { font-family: Arial, sans-serif; font-weight: 700; color: #4285f4; }
+.or { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.tabs.two { grid-template-columns: 1fr 1fr; }
 
 .foe { display: flex; align-items: center; gap: 10px; }
 .foe .glyph { width: 44px; height: 44px; display: grid; place-items: center; font-size: 30px; border: 1px solid var(--line); border-radius: 4px; color: var(--foe); background: var(--ink); }
@@ -127,10 +211,10 @@ button { cursor: pointer; }
 @keyframes toast { 0% { opacity: 0; transform: translate(-50%, 8px); } 12% { opacity: 1; transform: translate(-50%, 0); } 75% { opacity: 1; } 100% { opacity: 0; } }
 .ghost { background: transparent; border: 1px solid var(--line); border-radius: 3px; padding: 4px 10px; font-size: 13px; }
 
-.tabs { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
 .tab { background: transparent; border: 0; padding: 8px; font-size: 13px; color: var(--muted); }
 .tab[aria-selected="true"] { background: var(--ink); color: var(--brass); }
-.pane, #onOut, #onIn { display: flex; flex-direction: column; gap: 12px; }
+.pane, #onOut, #onIn, #rtMe, #rtGuest { display: flex; flex-direction: column; gap: 12px; }
 .note { margin: 0; font-size: 12px; color: var(--muted); }
 .joinrow { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 #codeIn { background: var(--ink); border: 1px solid var(--line); border-radius: 3px; padding: 6px 10px; letter-spacing: .3em; text-transform: uppercase; min-width: 0; font-size: 16px; }
@@ -244,6 +328,7 @@ button { cursor: pointer; }
   <div class="card" role="dialog" aria-labelledby="verdict">
     <div class="verdict" id="verdict">勝</div>
     <div class="reason" id="reason"></div>
+    <div class="ratechg" id="rateChg" hidden></div>
     <div class="streak" id="resStreak"></div>
     <div class="row">
       <button class="go" id="next" type="button">次の相手</button>
@@ -258,7 +343,13 @@ button { cursor: pointer; }
 
 <section class="sheet" id="setup" aria-label="コマの設定">
   <div class="col">
-  <div class="brand"><h1>文字ゴマ道場</h1><button class="ghost soundbtn" id="soundBtn" type="button" aria-pressed="true">音 ON</button></div>
+  <div class="brand">
+    <h1>文字ゴマ道場</h1>
+    <div class="brandtools">
+      <button class="acctbtn" id="acctBtn" type="button" hidden>ログイン</button>
+      <button class="ghost soundbtn" id="soundBtn" type="button" aria-pressed="true">音 ON</button>
+    </div>
+  </div>
   <div class="pick">
     <div class="charbox">
       <label class="label" for="charInput">文字</label>
@@ -275,30 +366,43 @@ button { cursor: pointer; }
     </div>
   </div>
   <div class="shape">
-    <span class="label">形を変える（上下左右に倒す・回す・反転する）</span>
-    <div class="fonts" role="group" aria-label="文字の形" id="shapeBtns">
-      <button class="chip" type="button" data-xf="up" aria-label="上に倒す">↑</button>
-      <button class="chip" type="button" data-xf="down" aria-label="下に倒す">↓</button>
-      <button class="chip" type="button" data-xf="left" aria-label="左に倒す">←</button>
-      <button class="chip" type="button" data-xf="right" aria-label="右に倒す">→</button>
-      <button class="chip" type="button" data-xf="ccw" aria-label="左に90度回す">⟲</button>
-      <button class="chip" type="button" data-xf="cw" aria-label="右に90度回す">⟳</button>
-      <button class="chip" type="button" data-xf="flipv" aria-label="上下反転">⇅ 上下反転</button>
-      <button class="chip" type="button" data-xf="fliph" aria-label="左右反転">⇆ 左右反転</button>
-      <button class="chip" type="button" data-xf="reset">戻す</button>
+    <div class="sechead"><span class="label">形</span><span class="tag" id="shapeDesc">そのまま</span></div>
+    <div class="shapectl" id="shapeBtns">
+      <div class="dpad" role="group" aria-label="倒す">
+        <button class="pad up" type="button" data-xf="up" aria-label="上に倒す">↑</button>
+        <button class="pad left" type="button" data-xf="left" aria-label="左に倒す">←</button>
+        <button class="pad mid" type="button" data-xf="reset" aria-label="元の形に戻す">戻す</button>
+        <button class="pad right" type="button" data-xf="right" aria-label="右に倒す">→</button>
+        <button class="pad down" type="button" data-xf="down" aria-label="下に倒す">↓</button>
+      </div>
+      <div class="shapeside">
+        <span class="mini">倒す（15°ずつ・性能が変わる）</span>
+        <span class="mini">回す</span>
+        <div class="seg" role="group" aria-label="回す">
+          <button type="button" data-xf="ccw" aria-label="左に90度回す">⟲ 左へ</button>
+          <button type="button" data-xf="cw" aria-label="右に90度回す">⟳ 右へ</button>
+        </div>
+        <span class="mini">反転</span>
+        <div class="seg" role="group" aria-label="反転">
+          <button type="button" data-xf="flipv" aria-pressed="false">⇅ 上下</button>
+          <button type="button" data-xf="fliph" aria-pressed="false">⇆ 左右</button>
+        </div>
+      </div>
     </div>
-    <p class="note" id="shapeDesc">そのまま</p>
-  </div>
-  <div class="fonts" role="group" aria-label="書体" id="fonts"></div>
-  <div class="skillpick">
-    <span class="label">アビリティ（1つ選んで、対戦中にボタンで使う）</span>
-    <div class="fonts" id="skills" role="group" aria-label="アビリティ"></div>
-    <p class="note" id="skillDesc"></p>
   </div>
   <div class="skillpick">
-    <span class="label">パッシブアビリティ（ボタン不要。条件がそろうと自動で働く）</span>
-    <div class="fonts" id="passives" role="group" aria-label="パッシブアビリティ"></div>
-    <p class="note" id="passiveDesc"></p>
+    <div class="sechead"><span class="label">書体</span></div>
+    <div class="fonts" role="group" aria-label="書体" id="fonts"></div>
+  </div>
+  <div class="skillpick">
+    <div class="sechead"><span class="label">アビリティ</span><span class="hint">対戦中にボタンで使う</span></div>
+    <div class="cards" id="skills" role="radiogroup" aria-label="アビリティ"></div>
+    <p class="desc" id="skillDesc"></p>
+  </div>
+  <div class="skillpick">
+    <div class="sechead"><span class="label">パッシブ</span><span class="hint">条件がそろうと自動で働く</span></div>
+    <div class="cards" id="passives" role="radiogroup" aria-label="パッシブアビリティ"></div>
+    <p class="desc" id="passiveDesc"></p>
   </div>
   <p class="msg" id="msg" role="status"></p>
   </div>
@@ -306,6 +410,7 @@ button { cursor: pointer; }
   <div class="tabs" role="tablist" aria-label="対戦の種類">
     <button class="tab" id="tabCpu" role="tab" type="button" aria-selected="true">CPUと対戦</button>
     <button class="tab" id="tabOnline" role="tab" type="button" aria-selected="false">オンライン</button>
+    <button class="tab" id="tabRated" role="tab" type="button" aria-selected="false">レート戦</button>
   </div>
 
   <div class="pane" id="paneCpu">
@@ -324,7 +429,7 @@ button { cursor: pointer; }
   <div class="pane" id="paneOnline" hidden>
     <div id="onOut">
       <p class="note">ルームを作って番号を相手に伝えると、同じページを開いた人と対戦できます。</p>
-      <div class="namerow">
+      <div class="namerow" id="nameRow">
         <label class="label" for="nameIn">名前（ルームの中で表示されます）</label>
         <input id="nameIn" type="text" maxlength="12" placeholder="12文字まで" autocomplete="off" spellcheck="false" enterkeyhint="done">
       </div>
@@ -336,7 +441,13 @@ button { cursor: pointer; }
       </div>
     </div>
     <div id="onIn" hidden>
-      <div class="codeline">
+      <div class="rtbanner" id="rtBanner" hidden>
+        <span class="label">レート戦</span>
+        <b id="rtVs">-</b>
+        <span id="rtCountLine"><span class="count" id="rtCount">30</span><span class="mini">　秒で開始。準備OKがまだなら、ランダムな文字とアビリティで出場します</span></span>
+        <span class="mini" id="rtForced" hidden></span>
+      </div>
+      <div class="codeline" id="codeLine">
         <span class="label">ルーム番号</span>
         <code id="codeOut">----</code>
         <button class="ghost" id="copyCode" type="button">コピー</button>
@@ -359,8 +470,78 @@ button { cursor: pointer; }
     </div>
     <p class="note" id="onMsg" role="status">接続しています…</p>
   </div>
+
+  <div class="pane" id="paneRated" hidden>
+    <div id="rtOff" class="rtnote"></div>
+    <div id="rtGuest" hidden>
+      <p class="note">レート戦は1対1で、勝敗によってレート（強さの点数）が上下します。参加にはログインが必要です。</p>
+      <button class="go" id="rtLogin" type="button">ログイン / 新規登録</button>
+    </div>
+    <div id="rtMe" hidden>
+      <div class="rtcard">
+        <div class="rtwho"><span class="label">あなた</span><b id="rtHandle">-</b></div>
+        <div class="rtrate"><span class="label">レート</span><b id="rtRating">1500</b></div>
+        <div class="rtrec"><span class="label">戦績</span><span id="rtRecord">0勝 0敗</span></div>
+      </div>
+      <button class="go" id="rtSearch" type="button">マッチング開始</button>
+      <div class="rtsearch" id="rtStatus" role="status" hidden>
+        <span class="spin" aria-hidden="true"></span>
+        <span id="rtStatusText">対戦相手を探しています…</span>
+        <button class="ghost" id="rtCancel" type="button">やめる</button>
+      </div>
+      <p class="note">レートの近い人から優先して組みます。相手が決まると30秒の準備時間があり、時間内に準備OKを押さないと、ランダムな文字とアビリティで出場します。</p>
+    </div>
+    <div class="ranking">
+      <div class="sechead"><span class="label">レートランキング</span><button class="ghost mini" id="rkReload" type="button">更新</button></div>
+      <ol class="rklist" id="rkList"></ol>
+    </div>
+  </div>
   </div>
 </section>
+
+<div class="modal" id="acct" hidden>
+  <div class="card acctcard" role="dialog" aria-modal="true" aria-labelledby="acctTitle">
+    <div class="sechead"><b id="acctTitle">アカウント</b><button class="ghost mini" id="acctClose" type="button">閉じる</button></div>
+    <div id="acctOut">
+      <button class="gbtn" id="gLogin" type="button"><span class="g">G</span>Google でログイン</button>
+      <div class="or"><span>または ID とパスワード</span></div>
+      <div class="tabs two" role="tablist">
+        <button class="tab" id="idTabLogin" role="tab" type="button" aria-selected="true">ログイン</button>
+        <button class="tab" id="idTabReg" role="tab" type="button" aria-selected="false">新規登録</button>
+      </div>
+      <form id="idForm" class="form" autocomplete="on">
+        <label class="label" for="idUser">ID</label>
+        <input id="idUser" type="text" autocomplete="username" spellcheck="false" maxlength="16" placeholder="半角英数字と _ で3〜16文字">
+        <label class="label" for="idPass">パスワード</label>
+        <input id="idPass" type="password" autocomplete="current-password" maxlength="64" placeholder="8文字以上">
+        <button class="go" id="idSubmit" type="submit">ログイン</button>
+      </form>
+    </div>
+    <div id="acctNew" hidden>
+      <p class="note">ルームやランキングで表示される ID を決めてください。</p>
+      <form id="newIdForm" class="form">
+        <label class="label" for="newId">ID</label>
+        <input id="newId" type="text" spellcheck="false" maxlength="16" placeholder="半角英数字と _ で3〜16文字">
+        <button class="go" type="submit">この ID で始める</button>
+      </form>
+    </div>
+    <div id="acctIn" hidden>
+      <div class="rtcard">
+        <div class="rtwho"><span class="label">ID</span><b id="acctHandle">-</b></div>
+        <div class="rtrate"><span class="label">レート</span><b id="acctRating">1500</b></div>
+      </div>
+      <form id="chIdForm" class="form">
+        <label class="label" for="chId">ID を変更（1日1回まで）</label>
+        <div class="joinrow">
+          <input id="chId" type="text" spellcheck="false" maxlength="16" placeholder="新しい ID">
+          <button class="ghost" type="submit">変更</button>
+        </div>
+      </form>
+      <button class="ghost" id="logout" type="button">ログアウト</button>
+    </div>
+    <p class="msg" id="acctMsg" role="status"></p>
+  </div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
@@ -1168,33 +1349,35 @@ function renderFontChips() {
   }
 }
 
-function renderSkills() {
-  const box = $('skills'); box.innerHTML = '';
-  for (const id of SKILL_IDS) {
+// 選択肢カードを並べる（アビリティ・パッシブ共通）
+function renderCards(box, ids, defs, current, meta, onPick) {
+  box.innerHTML = '';
+  for (const id of ids) {
     const b = document.createElement('button');
-    b.type = 'button'; b.className = 'chip'; b.textContent = SKILLS[id].name;
-    b.setAttribute('aria-pressed', String(id === S.skill));
-    b.addEventListener('click', () => {
-      S.skill = id; store.set('mg.skill', id); renderSkills();
-      if (ON.R) { sendDeck(); updateRoomUI(); }
-    });
+    b.type = 'button'; b.className = 'opt' + (id === 'hyper' ? ' ult' : '');
+    b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(id === current));
+    const nm = document.createElement('b'); nm.textContent = defs[id].name;
+    const sm = document.createElement('small'); sm.textContent = meta(id);
+    b.append(nm, sm);
+    b.addEventListener('click', () => onPick(id));
     box.appendChild(b);
   }
+}
+const skillMeta = id => SKILLS[id].cd ? `CD ${SKILLS[id].cd}秒` : `${SKILLS[id].uses}回` + (SKILLS[id].after ? `・${SKILLS[id].after}秒後〜` : '');
+const PASSIVE_TAG = { none: '—', revive: '1回', drain: '常時', guts: '1回', heavy: '常時', rubber: '常時', hunter: '撃破時', comeback: '5割未満' };
+function renderSkills() {
+  renderCards($('skills'), SKILL_IDS, SKILLS, S.skill, skillMeta, id => {
+    S.skill = id; store.set('mg.skill', id); renderSkills();
+    if (ON.R) { sendDeck(); updateRoomUI(); }
+  });
   $('skillDesc').textContent = `${SKILLS[S.skill].desc}（${skillLimit(S.skill)}）`;
 }
 
 function renderPassives() {
-  const box = $('passives'); box.innerHTML = '';
-  for (const id of PASSIVE_IDS) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'chip'; b.textContent = PASSIVES[id].name;
-    b.setAttribute('aria-pressed', String(id === S.passive));
-    b.addEventListener('click', () => {
-      S.passive = id; store.set('mg.passive', id); renderPassives();
-      if (ON.R) { sendDeck(); updateRoomUI(); }
-    });
-    box.appendChild(b);
-  }
+  renderCards($('passives'), PASSIVE_IDS, PASSIVES, S.passive, id => PASSIVE_TAG[id] || '', id => {
+    S.passive = id; store.set('mg.passive', id); renderPassives();
+    if (ON.R) { sendDeck(); updateRoomUI(); }
+  });
   $('passiveDesc').textContent = PASSIVES[S.passive].desc;
 }
 
@@ -1256,6 +1439,8 @@ async function refreshGlyph() {
   if (token !== glyphToken) return;
   const g = analyzeGlyph(ch, S.font, S.xf);
   $('shapeDesc').textContent = shapeText(S.xf);
+  document.querySelector('#shapeBtns [data-xf="flipv"]').setAttribute('aria-pressed', String(!!S.xf.fy));
+  document.querySelector('#shapeBtns [data-xf="fliph"]').setAttribute('aria-pressed', String(!!S.xf.fx));
   if (g.cells < 30) {
     $('msg').textContent = 'この文字は形がほとんどないため、コマにできません。';
     S.g = null; updateButtons(); return;
@@ -1336,7 +1521,7 @@ function colorize(players, myIdx) {
 
 function buildHud() {
   const P = S.players;
-  setGlyphEl($('hudYou'), S.ch, S.font);
+  setGlyphEl($('hudYou'), P[S.myIdx].ch, P[S.myIdx].font);
   S.hud = [];
   S.hud[S.myIdx] = { side: $('hudMe'), bar: $('spinYou') };
   $('hudMe').classList.remove('out');
@@ -1556,9 +1741,11 @@ function finish() {
     }
     $('resStreak').textContent = `この部屋の成績 ${ON.rec.w}勝 ${ON.rec.l}敗`;
     $('next').textContent = 'もう一度';
+    if (ON.rated) { $('next').textContent = 'もう一度マッチング'; RT.report(winIdx); }
     $('again').hidden = true;
   }
-  $('change').textContent = '字を選びなおす';
+  $('change').textContent = ON.rated ? '戻る' : '字を選びなおす';
+  if (!ON.rated) $('rateChg').hidden = true;
   $('result').hidden = false;
   $('next').focus();
 }
@@ -1689,10 +1876,11 @@ const ON = {
   ready: false, m: 0, phase: 'lobby', players: [], gone: new Set(), myShot: null,
   rec: { w: 0, l: 0 }, sentAt: 0, hitSeq: 0, seenHit: 0, evSeq: 0, seenEv: 0, hits: [], evs: [],
   skLast: new Map(), skPend: new Map(), stLast: new Map(), skN: 0, stN: 0, full: false,
+  rated: null, forcedDeck: null,
 };
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 // 通信の取り決めの版。ページを更新して中身が変わったら上げる（版が違う人どうしは試合を始められない）
-const PROTO = 5;
+const PROTO = 6;
 
 // ほかの人から届く値はすべて信用せず、型と範囲を確かめてから使う
 const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
@@ -1860,7 +2048,7 @@ async function joinRoom(code, role) {
   onMsg('');
   ON.unsubPeers = ON.R.onPeers(() => sync(), () => { onMsg('ルームとの接続が切れました。退出して入り直してください。'); });
   resetChat();
-  ON.R.presence({ v: PROTO, chat: [], role, name: ON.name, deck: null, ready: false,
+  ON.R.presence({ v: PROTO, chat: [], role, name: ON.name, uid: ACC.user ? ACC.user.uid : null, deck: null, ready: false,
     phase: role === 'host' ? 'lobby' : null, m: 0, seats: [], players: [], shot: null, sk: null, st: null, s: null, res: null }).catch(() => {});
   updateRoomUI();
   // 番号違いに気づけるよう、しばらくホストが見つからなければ知らせる
@@ -1870,6 +2058,7 @@ async function joinRoom(code, role) {
 async function leaveRoom() {
   const R = ON.R;
   if (!R) return;
+  RT.endRated();
   if (ON.unsubPeers) ON.unsubPeers();
   ON.R = null; ON.role = null; ON.members = []; ON.hostPeer = null;
   placeChat();
@@ -1916,12 +2105,13 @@ function sync() {
   let hostP = null;
   if (ON.role === 'host') {
     // 座席：いる人はそのまま、空いた席には来た順に座らせる（ホストのほかに3人まで）
-    const guests = others.filter(p => p.presence.role === 'guest');
+    const guests = others.filter(p => p.presence.role === 'guest' && (!ON.rated || p.presence.uid === ON.rated.opp));
     const seats = ON.seats.filter(id => guests.some(g => g.peer === id));
-    for (const g of guests) if (seats.length < MAX_PLAYERS - 1 && !seats.includes(g.peer)) seats.push(g.peer);
+    const maxSeats = ON.rated ? 1 : MAX_PLAYERS - 1;   // レート戦は1対1
+    for (const g of guests) if (seats.length < maxSeats && !seats.includes(g.peer)) seats.push(g.peer);
     if (seats.join() !== ON.seats.join()) { ON.seats = seats; ON.R.presence({ seats }).catch(() => {}); }
   } else {
-    hostP = others.find(p => p.presence.role === 'host') || null;
+    hostP = others.find(p => p.presence.role === 'host' && (!ON.rated || p.presence.uid === ON.rated.opp)) || null;
     ON.seats = hostP && Array.isArray(hostP.presence.seats) ? hostP.presence.seats.filter(x => typeof x === 'string').slice(0, MAX_PLAYERS - 1) : [];
     ON.full = !!(hostP && ON.me && !ON.seats.includes(ON.me) && ON.seats.length >= MAX_PLAYERS - 1);
     if (ON.full) onMsg('このルームは満員（4人）です。別の番号で遊んでください。');
@@ -1932,14 +2122,14 @@ function sync() {
   // 参加者の一覧（ホストが先頭、あとは座席順）
   const ids = ON.role === 'host' ? [ON.me, ...ON.seats] : (hostP ? [hostP.peer, ...ON.seats] : []);
   ON.members = ids.map(id => {
-    if (id === ON.me) return { peer: id, me: true, host: ON.role === 'host', name: ON.name, ch: S.ch, font: S.font, xf: S.xf, skill: S.skill, passive: S.passive, ready: ON.ready, g: S.g };
+    if (id === ON.me) return { peer: id, me: true, host: ON.role === 'host', name: ON.name, ...myDeck(), ready: ON.ready, g: myGlyph(), uid: ACC.user ? ACC.user.uid : null };
     const p = byPeer.get(id);
     if (!p) return null;
     const pr = p.presence, dk = pr.deck && typeof pr.deck === 'object' ? pr.deck : {};
     const ch = cleanCh(dk.ch), font = cleanFont(dk.font), xf = cleanXf(dk.xf);
     return { peer: id, me: false, host: pr.role === 'host', name: cleanName(pr.name) || '名無し', ch, font, xf, skill: cleanSkill(dk.skill),
       passive: PASSIVES[dk.passive] ? dk.passive : 'none', ready: pr.ready === true, hasDeck: !!(ch && font),
-      g: ch && font ? glyphFor(ch, font, xf) : null, pres: pr };
+      g: ch && font ? glyphFor(ch, font, xf) : null, pres: pr, uid: typeof pr.uid === 'string' ? pr.uid : null };
   }).filter(Boolean);
   chatSync(others);
   // 古い（または新しい）版のページを開いている人がいると試合が始まらないので、はっきり知らせる
@@ -2061,7 +2251,7 @@ function guestTick(hp) {
     const myIdx = ids.indexOf(ON.me);
     if (myIdx < 0) { ON.m = m; onMsg('試合が始まりました。次の試合から参加できます。'); return; }
     const players = ids.map(id => {
-      if (id === ON.me) return { ch: S.ch, font: S.font, g: S.g, skill: S.skill, passive: S.passive, name: ON.name };
+      if (id === ON.me) return { ...myDeck(), g: myGlyph(), name: ON.name };
       const mm = ON.members.find(x => x.peer === id);
       return mm && mm.g ? { ch: mm.ch, font: mm.font, g: mm.g, skill: mm.skill, passive: mm.passive, name: mm.name } : null;
     });
@@ -2125,15 +2315,18 @@ function applySnap(s) {
 
 function updateButtons() {
   $('start').disabled = !S.g || !!ON.R || S.cpus.length !== S.cpuN || S.cpus.some(c => !c.g);
-  $('mkRoom').disabled = !ON.room || !S.g || !!ON.joining;
-  $('joinRoom').disabled = !ON.room || !S.g || !!ON.joining;
+  $('mkRoom').disabled = !ON.room || !S.g || !!ON.joining || RT.searching;
+  $('joinRoom').disabled = !ON.room || !S.g || !!ON.joining || RT.searching;
   updateRoomUI();
 }
 
 function updateRoomUI() {
   const inRoom = !!ON.R;
   $('onOut').hidden = inRoom; $('onIn').hidden = !inRoom;
-  $('tabCpu').disabled = inRoom;
+  $('tabCpu').disabled = inRoom; $('tabRated').disabled = inRoom;
+  $('rtBanner').hidden = !(inRoom && ON.rated);
+  $('codeLine').hidden = !!(inRoom && ON.rated);
+  RT.render();
   if (!inRoom) return;
   $('codeOut').textContent = ON.code;
   const box = $('members'); box.innerHTML = '';
@@ -2162,7 +2355,7 @@ function updateRoomUI() {
     pill.textContent = m.ready ? '✓ 準備OK' : '準備中';
     row.append(g, who, pill); box.append(row);
   }
-  const free = MAX_PLAYERS - ON.members.length;
+  const free = (ON.rated ? 2 : MAX_PLAYERS) - ON.members.length;
   if (ON.members.length && free > 0) {
     const row = document.createElement('div'); row.className = 'member empty';
     const g = document.createElement('div'); g.className = 'glyph'; g.textContent = '＋';
@@ -2195,7 +2388,10 @@ function updateRoomUI() {
 
 // 自分の設定（文字・書体・形・スキル・パッシブ）は、準備OKのときだけほかの人へ送る。
 // 準備前はデータごと送らないので、ほかの人の画面には届かない
-const myDeck = () => ({ ch: S.ch, font: S.font, xf: S.xf, skill: S.skill, passive: S.passive });
+// レート戦で準備時間を過ぎたら、ランダムに用意した内容（ON.forcedDeck）で出場する
+const myDeck = () => ON.forcedDeck ? { ch: ON.forcedDeck.ch, font: ON.forcedDeck.font, xf: ON.forcedDeck.xf, skill: ON.forcedDeck.skill, passive: ON.forcedDeck.passive }
+  : { ch: S.ch, font: S.font, xf: S.xf, skill: S.skill, passive: S.passive };
+const myGlyph = () => ON.forcedDeck ? ON.forcedDeck.g : S.g;
 function sendDeck() {
   if (ON.R && ON.ready) ON.R.presence({ deck: myDeck() }).catch(() => {});
 }
@@ -2207,12 +2403,394 @@ function setReady(v) {
   sync();
 }
 
-function selectTab(online) {
-  $('tabCpu').setAttribute('aria-selected', String(!online));
-  $('tabOnline').setAttribute('aria-selected', String(online));
-  $('paneCpu').hidden = online; $('paneOnline').hidden = !online;
-  if (online) chatToBottom();
+// which：'cpu' | 'online' | 'rated'
+function selectTab(which) {
+  if (which === true) which = 'online'; else if (which === false) which = 'cpu';
+  for (const [k, t, p] of [['cpu', 'tabCpu', 'paneCpu'], ['online', 'tabOnline', 'paneOnline'], ['rated', 'tabRated', 'paneRated']]) {
+    $(t).setAttribute('aria-selected', String(k === which)); $(p).hidden = k !== which;
+  }
+  if (which === 'online') chatToBottom();
+  if (which === 'rated') RT.onShow();
 }
+
+// ───────── アカウント（Firebase） ─────────
+// Firebase コンソール →「プロジェクトの設定」→「マイアプリ（ウェブ）」の firebaseConfig をここに入れる。
+// これは公開してよい値で、データは firestore.rules の規則で守る。null のあいだはアカウントとレート戦を使わない
+const FIREBASE_CONFIG = null;
+const FB_VER = '12.19.0';
+// state：off（使えない）| loading | out（未ログイン）| needId（ID 未登録）| in（ログイン済み）
+const ACC = { auth: null, db: null, user: null, prof: null, unsub: null, state: 'off', why: '', registering: false };
+const ID_RE = /^[A-Za-z0-9_]{3,16}$/;
+const ts = () => firebase.firestore.FieldValue.serverTimestamp();
+// ID とパスワードの登録では、ID と別に変わらない内部用のメール形式の名前を作る（ID を変えてもログインできるように）
+const pseudoEmail = () => 'u' + Array.from(crypto.getRandomValues(new Uint8Array(10)), b => b.toString(16).padStart(2, '0')).join('') + '@users.mojigoma.example.com';
+const loadScript = src => new Promise((ok, ng) => { const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = ng; document.head.append(el); });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function initAccount() {
+  const cfg = window.__FB_CONFIG || FIREBASE_CONFIG;
+  if (window.claude && window.claude.use) { ACC.why = 'artifact'; return renderAcct(); }
+  if (!cfg) { ACC.why = 'config'; return renderAcct(); }
+  ACC.state = 'loading'; renderAcct();
+  try {
+    for (const m of ['app', 'auth', 'firestore']) await loadScript(`https://cdn.jsdelivr.net/npm/firebase@${FB_VER}/firebase-${m}-compat.js`);
+    firebase.initializeApp(cfg);
+    ACC.auth = firebase.auth(); ACC.db = firebase.firestore();
+    if (window.__FB_EMULATOR) { ACC.auth.useEmulator('http://127.0.0.1:9099'); ACC.db.useEmulator('127.0.0.1', 8080); }
+  } catch (e) { ACC.state = 'off'; ACC.why = 'load'; return renderAcct(); }
+  ACC.auth.onAuthStateChanged(onAuth);
+  ACC.auth.getRedirectResult().catch(e => acctMsg(authErr(e)));
+}
+
+function onAuth(user) {
+  if (ACC.unsub) { ACC.unsub(); ACC.unsub = null; }
+  ACC.user = user; ACC.prof = null;
+  if (!user) { ACC.state = 'out'; RT.stop(); renderAcct(); return; }
+  ACC.state = 'loading'; renderAcct();
+  ACC.unsub = ACC.db.collection('users').doc(user.uid).onSnapshot(snap => {
+    if (snap.exists) { ACC.prof = snap.data(); ACC.state = 'in'; }
+    else { ACC.prof = null; ACC.state = ACC.registering ? 'loading' : 'needId'; }
+    renderAcct();
+  }, () => { ACC.state = 'needId'; renderAcct(); });
+}
+
+function acctMsg(t, ok) { $('acctMsg').textContent = t || ''; $('acctMsg').style.color = ok ? 'var(--ok)' : ''; }
+function authErr(e) {
+  const c = e && e.code || '';
+  if (/wrong-password|invalid-credential|user-not-found|invalid-login/.test(c)) return 'ID かパスワードが違います。';
+  if (/too-many-requests/.test(c)) return '試行が多すぎます。しばらく待ってからもう一度試してください。';
+  if (/popup-closed|cancelled-popup/.test(c)) return 'ログインを取りやめました。';
+  if (/network/.test(c)) return '通信に失敗しました。通信状態を確かめてください。';
+  if (/weak-password/.test(c)) return 'パスワードは8文字以上にしてください。';
+  if (/unauthorized-domain/.test(c)) return 'このページのアドレスが Firebase に登録されていません（管理者の設定が必要です）。';
+  return e && e.message ? e.message : 'うまくいきませんでした。';
+}
+const checkId = id => ID_RE.test(id) ? '' : 'ID は半角英数字と _ で3〜16文字にしてください。';
+
+async function createProfile(id, email) {
+  const uid = ACC.auth.currentUser.uid, lower = id.toLowerCase(), db = ACC.db, b = db.batch();
+  b.set(db.collection('users').doc(uid), { handle: id, handleLower: lower, rating: 1500, wins: 0, losses: 0, games: 0, lastMatch: null, handleChangedAt: ts(), createdAt: ts() });
+  b.set(db.collection('handles').doc(lower), email ? { uid, email } : { uid });
+  await b.commit();
+}
+async function idTaken(id) { return (await ACC.db.collection('handles').doc(id.toLowerCase()).get()).exists; }
+
+async function loginGoogle() {
+  const p = new firebase.auth.GoogleAuthProvider();
+  try { await ACC.auth.signInWithPopup(p); }
+  catch (e) {
+    if (/popup-blocked|operation-not-supported/.test(e.code || '')) return ACC.auth.signInWithRedirect(p);
+    throw e;
+  }
+}
+async function loginIdPw(id, pw) {
+  const h = await ACC.db.collection('handles').doc(id.toLowerCase()).get();
+  if (!h.exists) throw { code: 'invalid-credential' };
+  if (!h.data().email) throw { message: 'この ID は Google アカウントで登録されています。「Google でログイン」を使ってください。' };
+  await ACC.auth.signInWithEmailAndPassword(h.data().email, pw);
+}
+async function registerIdPw(id, pw) {
+  const bad = checkId(id); if (bad) throw { message: bad };
+  if (pw.length < 8) throw { code: 'weak-password' };
+  if (await idTaken(id)) throw { message: 'この ID はすでに使われています。' };
+  const email = pseudoEmail();
+  ACC.registering = true;
+  try {
+    const cred = await ACC.auth.createUserWithEmailAndPassword(email, pw);
+    try { await createProfile(id, email); }
+    catch (e) { await cred.user.delete().catch(() => {}); throw { message: 'この ID はすでに使われています。' }; }
+  } finally { ACC.registering = false; }
+}
+async function changeId(id) {
+  const bad = checkId(id); if (bad) throw { message: bad };
+  const p = ACC.prof, uid = ACC.user.uid, lower = id.toLowerCase(), db = ACC.db;
+  if (id === p.handle) return;
+  const last = p.handleChangedAt && p.handleChangedAt.toMillis ? p.handleChangedAt.toMillis() : 0;
+  if (Date.now() - last < 864e5) {
+    const h = Math.ceil((last + 864e5 - Date.now()) / 36e5);
+    throw { message: `ID の変更は1日1回までです。あと約${h}時間で変更できます。` };
+  }
+  if (lower !== p.handleLower && await idTaken(id)) throw { message: 'この ID はすでに使われています。' };
+  const old = await db.collection('handles').doc(p.handleLower).get();
+  const email = old.exists && old.data().email;
+  const b = db.batch();
+  if (lower !== p.handleLower) { b.set(db.collection('handles').doc(lower), email ? { uid, email } : { uid }); b.delete(db.collection('handles').doc(p.handleLower)); }
+  b.update(db.collection('users').doc(uid), { handle: id, handleLower: lower, handleChangedAt: ts() });
+  await b.commit();
+}
+
+function renderAcct() {
+  const st = ACC.state, p = ACC.prof;
+  const btn = $('acctBtn');
+  btn.hidden = st === 'off';
+  btn.classList.toggle('in', st === 'in');
+  btn.textContent = st === 'in' ? '' : st === 'loading' ? '…' : st === 'needId' ? 'ID を決める' : 'ログイン';
+  if (st === 'in') { const n = document.createElement('span'); n.textContent = p.handle; const r = document.createElement('b'); r.textContent = p.rating; btn.append(n, r); }
+  $('acctOut').hidden = st !== 'out'; $('acctNew').hidden = st !== 'needId'; $('acctIn').hidden = st !== 'in';
+  if (st === 'in') { $('acctHandle').textContent = p.handle; $('acctRating').textContent = p.rating; }
+  // ログイン中は、ルームの名前に ID を使う
+  $('nameRow').hidden = st === 'in';
+  // レート戦の欄
+  $('rtOff').hidden = st !== 'off'; $('rtGuest').hidden = !(st === 'out' || st === 'needId'); $('rtMe').hidden = st !== 'in';
+  $('rtOff').textContent = ACC.why === 'artifact' ? 'レート戦とアカウントは、GitHub Pages 版（https://sono101323.github.io/game1/）で使えます。'
+    : ACC.why === 'load' ? 'アカウントの仕組みを読み込めませんでした。通信状態を確かめて、ページを再読み込みしてください。'
+    : st === 'loading' ? '読み込んでいます…' : 'レート戦は準備中です（管理者が Firebase を設定すると使えるようになります）。';
+  if (st === 'loading') $('rtOff').hidden = false;
+  if (st === 'in') {
+    $('rtHandle').textContent = p.handle; $('rtRating').textContent = p.rating;
+    $('rtRecord').textContent = `${p.wins}勝 ${p.losses}敗`;
+  }
+  RT.render();
+}
+function openAcct() { acctMsg(''); $('acct').hidden = false; (ACC.state === 'needId' ? $('newId') : ACC.state === 'in' ? $('chId') : $('idUser')).focus(); }
+function closeAcct() { $('acct').hidden = true; }
+let idMode = 'login';
+function setIdMode(m) {
+  idMode = m;
+  $('idTabLogin').setAttribute('aria-selected', String(m === 'login')); $('idTabReg').setAttribute('aria-selected', String(m === 'reg'));
+  $('idSubmit').textContent = m === 'login' ? 'ログイン' : 'この ID で登録';
+  $('idPass').autocomplete = m === 'login' ? 'current-password' : 'new-password';
+}
+async function busy(btn, fn) {
+  btn.disabled = true; acctMsg('');
+  try { await fn(); } catch (e) { acctMsg(authErr(e)); } finally { btn.disabled = false; }
+}
+$('acctBtn').addEventListener('click', openAcct);
+$('rtLogin').addEventListener('click', openAcct);
+$('acctClose').addEventListener('click', closeAcct);
+$('acct').addEventListener('click', e => { if (e.target === $('acct')) closeAcct(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('acct').hidden) closeAcct(); });
+$('idTabLogin').addEventListener('click', () => setIdMode('login'));
+$('idTabReg').addEventListener('click', () => setIdMode('reg'));
+$('gLogin').addEventListener('click', () => busy($('gLogin'), async () => { await loginGoogle(); }));
+$('idForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const id = $('idUser').value.trim(), pw = $('idPass').value;
+  busy($('idSubmit'), async () => {
+    if (idMode === 'login') await loginIdPw(id, pw); else await registerIdPw(id, pw);
+    $('idPass').value = ''; acctMsg(idMode === 'login' ? 'ログインしました。' : '登録しました。', true);
+  });
+});
+$('newIdForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const id = $('newId').value.trim(), btn = e.target.querySelector('button');
+  busy(btn, async () => {
+    const bad = checkId(id); if (bad) throw { message: bad };
+    if (await idTaken(id)) throw { message: 'この ID はすでに使われています。' };
+    try { await createProfile(id, null); } catch (er) { throw { message: 'この ID はすでに使われています。' }; }
+    acctMsg('登録しました。', true);
+  });
+});
+$('chIdForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const id = $('chId').value.trim(), btn = e.target.querySelector('button');
+  busy(btn, async () => { await changeId(id); $('chId').value = ''; acctMsg('ID を変更しました。', true); });
+});
+$('logout').addEventListener('click', async () => { RT.stop(); await ACC.auth.signOut(); acctMsg('ログアウトしました。', true); });
+setIdMode('login');
+
+// ───────── レート戦 ─────────
+// 待ち行列（queue）に入り、レートの近い人から順に、トランザクションで2人の試合（matches）を組む。
+// 組めたら、その試合の番号でいつものオンラインルームに入り、1対1で対戦する。
+// 結果は2人がそれぞれ報告し、一致したときだけ各自が自分のレートを動かす（規則で ±40 点以内に制限）
+const RATED_PREP = 30000;     // 準備時間（ミリ秒）
+const RT = {
+  searching: false, t0: 0, timer: null, busy: false, beatAt: 0, lastRank: 0, randomDeck: null, cd: null, unsubMatch: null,
+
+  render() {
+    const on = ACC.state === 'in';
+    $('rtSearch').hidden = !on || RT.searching; $('rtStatus').hidden = !on || !RT.searching;
+    $('rtSearch').disabled = !!ON.R;
+    $('mkRoom').disabled = $('mkRoom').disabled || RT.searching;
+    $('joinRoom').disabled = $('joinRoom').disabled || RT.searching;
+  },
+  onShow() { if (ACC.db && Date.now() - RT.lastRank > 15000) RT.loadRanking(); },
+
+  async loadRanking() {
+    if (!ACC.db) { $('rkList').innerHTML = '<li class="empty">ランキングはアカウント機能が使えるときに表示されます。</li>'; return; }
+    RT.lastRank = Date.now();
+    try {
+      const snap = await ACC.db.collection('users').orderBy('rating', 'desc').limit(50).get();
+      const box = $('rkList'); box.innerHTML = '';
+      if (snap.empty) { box.innerHTML = '<li class="empty">まだ誰もいません。最初のレート戦で1位になれます。</li>'; return; }
+      let rank = 0, prev = null, i = 0;
+      snap.forEach(d => {
+        const u = d.data(); i++;
+        if (u.rating !== prev) { rank = i; prev = u.rating; }   // 同点は同じ順位
+        const li = document.createElement('li');
+        li.className = (rank <= 3 ? 'top' : '') + (ACC.user && d.id === ACC.user.uid ? ' me' : '');
+        const a = document.createElement('span'); a.className = 'rk'; a.textContent = rank;
+        const b = document.createElement('span'); b.textContent = u.handle;
+        const c = document.createElement('span'); c.className = 'rr'; c.textContent = u.rating;
+        const w = document.createElement('span'); w.className = 'wl'; w.textContent = `${u.wins}勝${u.losses}敗`;
+        li.append(a, b, c, w); box.append(li);
+      });
+    } catch (e) { $('rkList').innerHTML = '<li class="empty">ランキングを読み込めませんでした。</li>'; }
+  },
+
+  async start() {
+    if (ACC.state !== 'in' || RT.searching || ON.R) return;
+    initAudio();
+    try {
+      await ACC.db.collection('queue').doc(ACC.user.uid).set({ rating: ACC.prof.rating, handle: ACC.prof.handle, ts: ts(), match: null });
+    } catch (e) { $('rtStatusText').textContent = 'マッチングを始められませんでした。'; return; }
+    RT.searching = true; RT.t0 = Date.now(); RT.beatAt = Date.now();
+    $('rtStatusText').textContent = '対戦相手を探しています…';
+    RT.render();
+    RT.timer = setInterval(RT.tick, 2000); RT.tick();
+    // 相手が先に組んだときに、すぐ気づけるように
+    RT.unsubQ = ACC.db.collection('queue').doc(ACC.user.uid).onSnapshot(s => { if (s.exists && s.data().match && RT.searching) RT.matched(s.data().match); }, () => {});
+  },
+  async stop() {
+    clearInterval(RT.timer); RT.timer = null;
+    if (RT.unsubQ) { RT.unsubQ(); RT.unsubQ = null; }
+    if (RT.searching) { RT.searching = false; try { await ACC.db.collection('queue').doc(ACC.user.uid).delete(); } catch (e) {} }
+    RT.render();
+  },
+
+  async tick() {
+    if (!RT.searching || RT.busy) return;
+    RT.busy = true;
+    try {
+      const uid = ACC.user.uid, mine = ACC.db.collection('queue').doc(uid);
+      const me = await mine.get();
+      if (!me.exists) { await RT.stop(); return; }
+      if (me.data().match) { await RT.matched(me.data().match); return; }
+      if (Date.now() - RT.beatAt > 6000) { RT.beatAt = Date.now(); mine.update({ ts: ts() }).catch(() => {}); }
+      // 探す幅：最初はレート差100まで。5秒ごとに75ずつ広げる
+      const el = (Date.now() - RT.t0) / 1000, r = ACC.prof.rating, W = Math.min(2000, 100 + Math.floor(el / 5) * 75);
+      $('rtStatusText').textContent = `対戦相手を探しています… ${Math.floor(el)}秒（レート差 ±${W} まで）`;
+      const snap = await ACC.db.collection('queue').where('rating', '>=', r - W).where('rating', '<=', r + W).orderBy('rating').limit(30).get();
+      const now = Date.now();
+      const cands = snap.docs.filter(d => d.id !== uid && !d.data().match && d.data().ts && now - d.data().ts.toMillis() < 25000)
+        .sort((a, b) => Math.abs(a.data().rating - r) - Math.abs(b.data().rating - r));
+      for (const c of cands.slice(0, 3)) if (RT.searching && await RT.pair(c.id)) return;
+    } catch (e) { console.warn('レート戦:', e); }
+    finally { RT.busy = false; }
+  },
+
+  async pair(oid) {
+    const db = ACC.db, uid = ACC.user.uid, mref = db.collection('matches').doc();
+    let code = ''; const a = new Uint32Array(6); crypto.getRandomValues(a); for (const v of a) code += CODE_CHARS[v % CODE_CHARS.length];
+    try {
+      await db.runTransaction(async tx => {
+        const qa = await tx.get(db.collection('queue').doc(uid)), qb = await tx.get(db.collection('queue').doc(oid));
+        if (!qa.exists || !qb.exists || qa.data().match || qb.data().match) throw new Error('taken');
+        const ua = await tx.get(db.collection('users').doc(uid)), ub = await tx.get(db.collection('users').doc(oid));
+        tx.set(mref, { players: [uid, oid], ratings: [ua.data().rating, ub.data().rating], handles: [ua.data().handle, ub.data().handle],
+          host: uid, code, createdAt: ts(), reports: {}, applied: {} });
+        tx.update(qa.ref, { match: mref.id });
+        tx.update(qb.ref, { match: mref.id });
+      });
+    } catch (e) { return false; }
+    await RT.matched(mref.id);
+    return true;
+  },
+
+  async matched(mid) {
+    if (ON.rated || !RT.searching) return;
+    RT.searching = false;
+    clearInterval(RT.timer); RT.timer = null;
+    if (RT.unsubQ) { RT.unsubQ(); RT.unsubQ = null; }
+    ACC.db.collection('queue').doc(ACC.user.uid).delete().catch(() => {});
+    let m;
+    try { m = (await ACC.db.collection('matches').doc(mid).get()).data(); } catch (e) { RT.render(); return; }
+    const i = m.players.indexOf(ACC.user.uid), o = 1 - i;
+    ON.rated = { mid, me: ACC.user.uid, opp: m.players[o], oppHandle: m.handles[o], oppRating: m.ratings[o], myRating: m.ratings[i],
+      deadline: Date.now() + RATED_PREP, reported: false, done: false };
+    ON.forcedDeck = null; $('rtForced').hidden = true;
+    $('rtVs').textContent = `${m.handles[i]}（${m.ratings[i]}）　対　${m.handles[o]}（${m.ratings[o]}）`;
+    sfx('join', .7, 0);
+    RT.randomDeck = await RT.makeRandomDeck();
+    selectTab('online');
+    ON.name = ACC.prof.handle;
+    const role = m.host === ACC.user.uid ? 'host' : 'guest';
+    // ホストのルームができるまで、ゲストは少し待って入り直す
+    for (let k = 0; k < 8 && !ON.R && ON.rated; k++) { await enterRoom(m.code, role); if (!ON.R) await sleep(2000); }
+    if (!ON.R) { RT.abort('相手とつながりませんでした。レートは変わりません。'); return; }
+    clearInterval(RT.cd); RT.cd = setInterval(RT.countdown, 250);
+    RT.render(); updateRoomUI();
+  },
+
+  // 準備時間を過ぎたら、まだ準備OKでない人はランダムな内容で出場する
+  countdown() {
+    const R = ON.rated;
+    if (!R || !ON.R) { clearInterval(RT.cd); return; }
+    if (S.mode !== 'idle') return;
+    const left = Math.max(0, Math.ceil((R.deadline - Date.now()) / 1000));
+    $('rtCount').textContent = left;
+    if (left <= 0 && !ON.ready && RT.randomDeck) {
+      ON.forcedDeck = RT.randomDeck;
+      $('rtForced').hidden = false;
+      $('rtForced').textContent = `準備時間が過ぎたので「${RT.randomDeck.ch}」（${fontById(RT.randomDeck.font).name}・${SKILLS[RT.randomDeck.skill].name}・${PASSIVES[RT.randomDeck.passive].name}）で出場します。`;
+      setReady(true);
+    }
+    // 準備時間のあと30秒たっても相手が来なければ取りやめる
+    if (Date.now() > R.deadline + 30000 && !ON.members.some(m => !m.me)) RT.abort('相手が来なかったため、レート戦を取りやめました。レートは変わりません。');
+  },
+
+  async makeRandomDeck() {
+    for (let k = 0; k < 10; k++) {
+      const ch = CPU_POOL[Math.floor(Math.random() * CPU_POOL.length)], font = FONTS[Math.floor(Math.random() * FONTS.length)].id;
+      await ensureFont(fontById(font), ch);
+      const g = analyzeGlyph(ch, font, XF0);
+      if (g.cells >= 30) return { ch, font, xf: { ...XF0 }, skill: SKILL_IDS[Math.floor(Math.random() * SKILL_IDS.length)],
+        passive: PASSIVE_IDS[1 + Math.floor(Math.random() * (PASSIVE_IDS.length - 1))], g };
+    }
+    return { ch: S.ch, font: S.font, xf: S.xf, skill: S.skill, passive: S.passive, g: S.g };
+  },
+
+  async abort(msg) {
+    const was = ON.R;
+    RT.endRated();
+    if (was) await leaveRoom();
+    selectTab('rated');
+    $('rtStatus').hidden = false; $('rtStatusText').textContent = msg;
+    setTimeout(() => RT.render(), 6000);
+  },
+  endRated() { clearInterval(RT.cd); RT.cd = null; if (RT.unsubMatch) { RT.unsubMatch(); RT.unsubMatch = null; } ON.rated = null; ON.forcedDeck = null; },
+
+  // 試合が終わったら、勝者を報告し、2人の報告がそろったら自分のレートを動かす
+  async report(winIdx) {
+    const R = ON.rated;
+    if (!R || R.reported) return;
+    R.reported = true;
+    const chg = $('rateChg');
+    chg.hidden = false; chg.className = 'ratechg'; chg.textContent = 'レートを計算しています…';
+    const wPeer = ON.players[winIdx];
+    const winner = wPeer === ON.me ? R.me : R.opp;
+    const mref = ACC.db.collection('matches').doc(R.mid);
+    try { await mref.update({ ['reports.' + R.me]: winner }); }
+    catch (e) { chg.textContent = '結果を送れなかったため、レートは変わりません。'; return; }
+    const giveUp = setTimeout(() => { if (!R.done) { R.done = true; chg.textContent = '相手の結果報告が届かないため、レートは変わりません。'; if (RT.unsubMatch) RT.unsubMatch(); } }, 60000);
+    RT.unsubMatch = mref.onSnapshot(async snap => {
+      const m = snap.data(); if (!m || R.done) return;
+      const rep = m.reports || {};
+      if (!(R.opp in rep) || !(R.me in rep)) return;
+      R.done = true; clearTimeout(giveUp);
+      if (RT.unsubMatch) { RT.unsubMatch(); RT.unsubMatch = null; }
+      if (rep[R.opp] !== rep[R.me]) { chg.textContent = '2人の結果報告が食い違ったため、レートは変わりません。'; return; }
+      const won = rep[R.me] === R.me;
+      const E = 1 / (1 + Math.pow(10, (R.oppRating - R.myRating) / 400));
+      let d = Math.round(32 * ((won ? 1 : 0) - E));
+      if (won && d < 1) d = 1; if (!won && d > -1) d = -1;
+      d = Math.max(-40, Math.min(40, d));
+      const p = ACC.prof, b = ACC.db.batch();
+      b.update(ACC.db.collection('users').doc(R.me), { rating: p.rating + d, wins: p.wins + (won ? 1 : 0), losses: p.losses + (won ? 0 : 1), games: p.games + 1, lastMatch: R.mid });
+      b.update(mref, { ['applied.' + R.me]: true });
+      try {
+        await b.commit();
+        chg.className = 'ratechg ' + (d > 0 ? 'up' : 'down');
+        chg.textContent = `レート ${p.rating} → ${p.rating + d}（${d > 0 ? '+' : ''}${d}）`;
+        RT.lastRank = 0;
+      } catch (e) { chg.textContent = 'レートを保存できませんでした。'; }
+    }, () => {});
+  },
+};
+$('rtSearch').addEventListener('click', () => RT.start());
+$('rtCancel').addEventListener('click', () => { RT.stop(); });
+$('rkReload').addEventListener('click', () => RT.loadRanking());
+window.addEventListener('pagehide', () => { if (RT.searching && ACC.db) ACC.db.collection('queue').doc(ACC.user.uid).delete().catch(() => {}); });
 
 // 日本語入力の変換中は確定を待ってから読み取る
 $('charInput').addEventListener('input', e => { fitCharInput(); if (!e.isComposing) refreshGlyph(); });
@@ -2223,22 +2801,26 @@ $('start').addEventListener('click', startCpu);
 $('shoot').addEventListener('click', shoot);
 $('skillBtn').addEventListener('click', pressSkill);
 $('next').addEventListener('click', async () => {
+  if (S.kind === 'online' && ON.rated) { await leaveRoom(); selectTab('rated'); RT.start(); return; }
   if (S.kind === 'online') { backToSetup(); if (ON.R) setReady(true); return; }
   await rerollCpus(); startCpu();
 });
 $('again').addEventListener('click', startCpu);
 // 結果画面から設定に戻り、すぐ文字を打ち直せるよう入力欄を選んだ状態にする
-$('change').addEventListener('click', () => {
+$('change').addEventListener('click', async () => {
+  if (S.kind === 'online' && ON.rated) { await leaveRoom(); selectTab('rated'); }
   backToSetup();
   const input = $('charInput');
   input.scrollIntoView({ block: 'center' });
   input.focus({ preventScroll: true });
   input.select();
 });
-$('tabCpu').addEventListener('click', () => selectTab(false));
-$('tabOnline').addEventListener('click', () => selectTab(true));
+$('tabCpu').addEventListener('click', () => selectTab('cpu'));
+$('tabOnline').addEventListener('click', () => selectTab('online'));
+$('tabRated').addEventListener('click', () => selectTab('rated'));
 // 名前はルームを作るとき（ホスト）と参加するとき（ゲスト）に決める
 function takeName() {
+  if (ACC.prof) { ON.name = ACC.prof.handle; return ON.name; }   // ログイン中は登録した ID を名前にする
   const n = myName();
   if (!n) { onMsg('名前を入力してください。'); $('nameIn').focus(); return null; }
   ON.name = n; store.set('mg.name', n);
@@ -2283,7 +2865,7 @@ canvas.addEventListener('pointerdown', e => {
     ON.R.presence({ st: { m: ON.m, n: ON.stN, x: +hitPoint.x.toFixed(2), z: +hitPoint.z.toFixed(2) } }).catch(() => {});
   } else steerTo(B, S.myIdx, hitPoint.x, hitPoint.z);
 });
-document.querySelectorAll('#shapeBtns .chip').forEach(b => b.addEventListener('click', () => changeShape(b.dataset.xf)));
+document.querySelectorAll('#shapeBtns [data-xf]').forEach(b => b.addEventListener('click', () => changeShape(b.dataset.xf)));
 
 // ボタンを押したときの音（専用の音があるボタンは除く）。最初の操作で音の準備もする
 const OWN_SOUND = new Set(['readyBtn', 'shoot', 'skillBtn', 'chatSend', 'soundBtn']);
@@ -2398,6 +2980,7 @@ renderPassives();
 renderCpuCount();
 updateRoomUI();
 initRoom();
+initAccount();
 Promise.all([rerollCpus(), refreshGlyph()]).then(() => requestAnimationFrame(frame));
 })();
 </script>

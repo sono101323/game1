@@ -1,0 +1,129 @@
+rules_version = '2';
+// 文字ゴマ道場：アカウント・レート戦のデータを守る規則
+// - users/{uid}    ：プロフィールとレート（誰でも読める。本人だけが決まった形でしか書き換えられない）
+// - handles/{id}   ：ID（小文字）→ 持ち主。ID の重複を防ぎ、ID とパスワードでのログインに使う
+// - queue/{uid}    ：レート戦の待ち行列
+// - matches/{mid}  ：成立したレート戦。2人の結果報告が一致したときだけレートを動かせる
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function authed() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    function userPath(u) { return /databases/$(database)/documents/users/$(u); }
+    function handlePath(h) { return /databases/$(database)/documents/handles/$(h); }
+    function matchPath(m) { return /databases/$(database)/documents/matches/$(m); }
+    function queuePath(u) { return /databases/$(database)/documents/queue/$(u); }
+    function okHandle(h) { return h is string && h.matches('^[A-Za-z0-9_]{3,16}$'); }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+
+    match /handles/{h} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if authed()
+        && request.resource.data.keys().hasOnly(['uid', 'email'])
+        && request.resource.data.uid == me()
+        && getAfter(userPath(me())).data.handleLower == h;
+      allow delete: if authed() && resource.data.uid == me()
+        && getAfter(userPath(me())).data.handleLower != h;
+    }
+
+    match /users/{uid} {
+      allow get, list: if true;
+      allow create: if authed() && me() == uid
+        && request.resource.data.keys().hasOnly(['handle', 'handleLower', 'rating', 'wins', 'losses', 'games', 'lastMatch', 'handleChangedAt', 'createdAt'])
+        && okHandle(request.resource.data.handle)
+        && request.resource.data.handleLower == request.resource.data.handle.lower()
+        && request.resource.data.rating == 1500
+        && request.resource.data.wins == 0 && request.resource.data.losses == 0 && request.resource.data.games == 0
+        && request.resource.data.lastMatch == null
+        && request.resource.data.handleChangedAt == request.time
+        && request.resource.data.createdAt == request.time
+        && getAfter(handlePath(request.resource.data.handleLower)).data.uid == uid;
+      allow update: if authed() && me() == uid && (handleChange(uid) || ratingChange(uid));
+
+      // ID の変更：1日1回まで。新しい ID の handles を同時に作り、古い ID は消す
+      function handleChange(uid) {
+        let d = request.resource.data;
+        let o = resource.data;
+        return changed().hasOnly(['handle', 'handleLower', 'handleChangedAt'])
+          && okHandle(d.handle) && d.handleLower == d.handle.lower()
+          && d.handleChangedAt == request.time
+          && request.time > o.handleChangedAt + duration.value(1, 'd')
+          && getAfter(handlePath(d.handleLower)).data.uid == uid
+          && (d.handleLower == o.handleLower || !existsAfter(handlePath(o.handleLower)));
+      }
+      // レートの反映：2人の報告が一致した試合だけ、1試合1回、±40点以内で勝敗と向きが合っているとき
+      function ratingChange(uid) {
+        let d = request.resource.data;
+        let o = resource.data;
+        let m = get(matchPath(d.lastMatch)).data;
+        let other = m.players[0] == uid ? m.players[1] : m.players[0];
+        let won = m.reports[uid] == uid;
+        let delta = d.rating - o.rating;
+        return changed().hasOnly(['rating', 'wins', 'losses', 'games', 'lastMatch'])
+          && d.lastMatch is string && d.lastMatch != o.lastMatch
+          && uid in m.players
+          && !(uid in m.applied)
+          && getAfter(matchPath(d.lastMatch)).data.applied[uid] == true
+          && (uid in m.reports) && (other in m.reports) && m.reports[uid] == m.reports[other]
+          && d.games == o.games + 1
+          && ((won && d.wins == o.wins + 1 && d.losses == o.losses && delta >= 1 && delta <= 40)
+            || (!won && d.losses == o.losses + 1 && d.wins == o.wins && delta <= -1 && delta >= -40));
+      }
+    }
+
+    match /queue/{uid} {
+      allow read: if authed();
+      allow create: if authed() && me() == uid
+        && request.resource.data.keys().hasOnly(['rating', 'handle', 'ts', 'match'])
+        && request.resource.data.match == null
+        && request.resource.data.rating == get(userPath(uid)).data.rating
+        && request.resource.data.handle == get(userPath(uid)).data.handle
+        && request.resource.data.ts == request.time;
+      allow update: if authed() && (
+        // 本人：生存の合図（ts）と、相手が決まったときの match
+        (me() == uid && changed().hasOnly(['ts', 'match'])
+          && (request.resource.data.match == resource.data.match
+            || (resource.data.match == null && getAfter(matchPath(request.resource.data.match)).data.players.hasAll([uid]))))
+        // 対戦を組んだ相手：まだ待っている人の match だけを、2人が入った試合に設定できる
+        || (me() != uid && changed().hasOnly(['match']) && resource.data.match == null
+          && request.resource.data.match is string
+          && getAfter(matchPath(request.resource.data.match)).data.players.hasAll([uid, me()])));
+      allow delete: if authed() && me() == uid;
+    }
+
+    match /matches/{mid} {
+      allow get: if authed() && me() in resource.data.players;
+      allow list: if false;
+      allow create: if authed()
+        && request.resource.data.keys().hasOnly(['players', 'ratings', 'handles', 'host', 'code', 'createdAt', 'reports', 'applied'])
+        && request.resource.data.players.size() == 2
+        && request.resource.data.players[0] == me() && request.resource.data.players[1] != me()
+        && request.resource.data.host == me()
+        && request.resource.data.reports == {} && request.resource.data.applied == {}
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.code is string && request.resource.data.code.matches('^[A-Z0-9]{6}$')
+        && request.resource.data.ratings[0] == get(userPath(request.resource.data.players[0])).data.rating
+        && request.resource.data.ratings[1] == get(userPath(request.resource.data.players[1])).data.rating
+        && get(queuePath(request.resource.data.players[1])).data.match == null
+        && getAfter(queuePath(request.resource.data.players[1])).data.match == mid
+        && getAfter(queuePath(me())).data.match == mid;
+      allow update: if authed() && me() in resource.data.players && (reportOnly() || applyOnly());
+
+      // 勝者の報告：自分の分を1回だけ
+      function reportOnly() {
+        return changed().hasOnly(['reports'])
+          && request.resource.data.reports.diff(resource.data.reports).affectedKeys().hasOnly([me()])
+          && !(me() in resource.data.reports)
+          && request.resource.data.reports[me()] in resource.data.players;
+      }
+      // レートを反映した印：自分の分を1回だけ、プロフィールの更新と同時に
+      function applyOnly() {
+        return changed().hasOnly(['applied'])
+          && request.resource.data.applied.diff(resource.data.applied).affectedKeys().hasOnly([me()])
+          && !(me() in resource.data.applied)
+          && request.resource.data.applied[me()] == true
+          && getAfter(userPath(me())).data.lastMatch == mid;
+      }
+    }
+  }
+}

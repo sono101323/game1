@@ -13,3 +13,20 @@
 ## 効果音
 
 `sounds/` の効果音は、npm パッケージ uisfx の CC0（パブリックドメイン）音源を使っています。詳しくは `sounds/README.md` を参照してください。画面右上の「音 ON／OFF」で切り替えられます。
+
+## アカウントとレート戦（Firebase）
+
+GitHub Pages 版では、Firebase を使ったアカウント（Google ログイン、または ID とパスワード）とレート戦（1対1・レートの近い人から優先して組む）、レートランキングを使えます。claude.ai 版では使えません。
+
+- 設定値は `index.html` の `FIREBASE_CONFIG` に入れます（`null` のあいだはアカウントとレート戦が無効になります）。
+- データの守りは `firestore.rules` の規則で行います。レートは、対戦した2人の結果報告が一致したときだけ、1試合1回・±40点以内で動かせます。
+- 規則は Firebase コンソールの「Firestore Database → ルール」に貼り付けるか、Firebase CLI で `firebase deploy --only firestore:rules` を実行して反映します。
+
+### 準備の手順
+
+1. [Firebase コンソール](https://console.firebase.google.com/)でプロジェクトを作る（Google アナリティクスは不要）
+2. 「Authentication」を始め、ログイン方法で「Google」と「メール / パスワード」を有効にする
+3. 「Authentication → 設定 → 承認済みドメイン」に `sono101323.github.io` を追加する
+4. 「Firestore Database」を本番環境モードで作る（ロケーションは `asia-northeast1`（東京）など）
+5. 「Firestore Database → ルール」に `firestore.rules` の中身を貼り付けて公開する
+6. 「プロジェクトの設定 → マイアプリ」でウェブアプリを追加し、表示される `firebaseConfig` を `FIREBASE_CONFIG` に入れる
