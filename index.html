@@ -746,12 +746,12 @@ const FIELDS = {
   pillar: { name: '中央柱',   tag: '柱・3穴', desc: '中央に柱が立つ。柱に当たると跳ね返り、回転が少し減る', R: 5.8, k: .045, pockets: pocketsOf(3), pw: .30, ws: .35, pillar: .75 },
   holes:  { name: '穴だらけ', tag: '6穴・逆回転', desc: '小さなポケットが6つ。壁は逆向きに少し速く回る', R: 5.5, k: .045, pockets: pocketsOf(6), pw: .20, ws: -.45, pillar: 0 },
   // 多角形のステージ：verts は壁の頂点（壁と一緒に回る座標）、holes はポケットになる頂点の番号、gap はその頂点から両側の壁を何mあけるか
-  tri:    { name: '三角',     tag: '角3穴',   desc: '三角形の土俵。3つの角がポケット。辺の中央は中心に近く、押し込まれやすい', R: 4.6, Rout: 7.4, startR: 2.5, k: .02, ws: .22,
-            verts: polyVerts(3, 7.4, Math.PI / 2), holes: [0, 1, 2], gap: 2.2 },
-  square: { name: '四角',     tag: '角4穴',   desc: '四角い土俵。4つの角がポケット。回る壁の角に弾かれる', R: 5.2, Rout: 6.8, startR: 3, k: .022, ws: .25,
-            verts: polyVerts(4, 6.8, Math.PI / 4), holes: [0, 1, 2, 3], gap: 1.7 },
-  star:   { name: '星',       tag: '内角5穴', desc: '星形の土俵。内側に出っ張った5つの角がポケット。先端に逃げ込むと落ちにくいが、回転を削られやすい', R: 4.4, Rout: 7, startR: 2.4, k: .03, ws: .2,
-            verts: starVerts(5, 7, 3.4, Math.PI / 2), holes: [1, 3, 5, 7, 9], gap: .8 },
+  tri:    { name: '三角',     tag: '角3穴',   desc: '三角形の土俵。3つの角がポケット。辺の中央は中心に近く、押し込まれやすい', R: 6.9, Rout: 11.1, startR: 3.75, k: .0133, ws: .22,
+            verts: polyVerts(3, 11.1, Math.PI / 2), holes: [0, 1, 2], gap: 4.4 },
+  square: { name: '四角',     tag: '角4穴',   desc: '四角い土俵。4つの角がポケット。回る壁の角に弾かれる', R: 7.8, Rout: 10.2, startR: 4.5, k: .0147, ws: .25,
+            verts: polyVerts(4, 10.2, Math.PI / 4), holes: [0, 1, 2, 3], gap: 4.2 },
+  star:   { name: '星',       tag: '内角5穴', desc: '星形の土俵。内側に出っ張った5つの角がポケット。先端に逃げ込むと落ちにくいが、回転を削られやすい', R: 6.6, Rout: 10.5, startR: 3.6, k: .02, ws: .2,
+            verts: starVerts(5, 10.5, 5.1, Math.PI / 2), holes: [1, 3, 5, 7, 9], gap: 1.2 },
   boost:  { name: '加速帯',   tag: '加速4枚', desc: '床に加速帯が4枚。乗ると矢印の向きに一気に加速する。ポケットは3つ', R: 5.8, k: .045, pockets: pocketsOf(3), pw: .30, ws: .35, pillar: 0,
             pads: padsOn(4, 3.3, 2.2, 1.1) },
 };
@@ -2182,7 +2182,7 @@ const ON = {
 };
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 // 通信の取り決めの版。ページを更新して中身が変わったら上げる（版が違う人どうしは試合を始められない）
-const PROTO = 9;
+const PROTO = 10;
 
 // ほかの人から届く値はすべて信用せず、型と範囲を確かめてから使う
 const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
@@ -2527,7 +2527,7 @@ function hostTick(byPeer) {
       const n = num(st.n, 0, 1e9, 0);
       if (n <= (ON.stLast.get(i) || 0)) return;
       ON.stLast.set(i, n);
-      steerTo(S.battle, i, num(st.x, -8, 8, 0), num(st.z, -8, 8, 0));
+      steerTo(S.battle, i, num(st.x, -12, 12, 0), num(st.z, -12, 12, 0));
     });
   }
 }
